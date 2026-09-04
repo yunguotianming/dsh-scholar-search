@@ -1,0 +1,18 @@
+# dsh-scholar-search bundle layer.
+#
+# `dsh plugin --profile <name> add dsh-scholar-search` appends this layer to
+# the profile's `dsh.profile.bundles`. It inserts ONE row that mounts the
+# plugin with its shipped defaults; override any field from the profile's own
+# `cordis.patch.yml` (a patch replaces the whole `config`, so restate every
+# key you keep):
+#
+#   - id: scholar-search
+#     config:
+#       email: you@example.org
+#       allowGrayArea: false
+#       downloadDir: papers
+#
+# All sources are free public APIs; no credential is required to start.
+- insert:
+    - id: scholar-search
+      name: dsh-scholar-search

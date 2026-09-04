@@ -1,0 +1,125 @@
+{
+  "name": "dsh-scholar-search",
+  "version": "0.0.2",
+  "description": "Free academic literature search + OA full-text download for DeepSeek Harness (dsh): scholar_search / scholar_download / scholar_read over OpenAlex, Semantic Scholar, PubMed, Europe PMC, arXiv, bioRxiv/medRxiv, Crossref, DOAJ, CORE, Unpaywall, OpenAIRE, Google Scholar — no paid API, no credits.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/client-types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "README_CN.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "academic",
+    "literature",
+    "paper-search",
+    "open-access",
+    "openalex",
+    "semantic-scholar",
+    "pubmed",
+    "europepmc",
+    "arxiv",
+    "biorxiv",
+    "medrxiv",
+    "crossref",
+    "doaj",
+    "core",
+    "unpaywall",
+    "openaire"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ]
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "build": "pnpm run build:lib && pnpm run build:client",
+    "build:lib": "tsc -p tsconfig.build.json",
+    "build:client": "tsdown && tsc -p tsconfig.client-types.json",
+    "clean": "rm -rf lib",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "prepare": "pnpm run build",
+    "prepublishOnly": "pnpm run clean && pnpm run typecheck && pnpm run test"
+  },
+  "dependencies": {
+    "pdf-parse": "^2.4.5",
+    "playwright-core": "^1.49.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-settings": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6",
+    "@deepseek-ai/schemastery": ">=3.18.1",
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-host-webserver": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-settings": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-client-connection": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-webserver": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-settings": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "3.18.1",
+    "@types/node": "^22.20.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsdown": "^0.22.14",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.8"
+  }
+}
