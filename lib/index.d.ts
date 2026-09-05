@@ -22,7 +22,7 @@ export declare const name = "scholar-search";
 /** Services required before `apply` runs; `settings` and `webServer` attach lazily. */
 export declare const inject: string[];
 /** Version string sent in the `User-Agent`; kept in sync with package.json. */
-export declare const VERSION = "0.0.1";
+export declare const VERSION = "0.2.0";
 export { PING_ROUTE, SETTINGS_NAMESPACE } from './shared/constants.js';
 export type { PingResponse } from './shared/constants.js';
 /** Plugin configuration; every field is optional and hot-updatable from the settings UI. */
@@ -59,6 +59,20 @@ export interface Config {
     browserDownload?: boolean;
     /** Explicit browser executable path; absent probes the chrome/msedge channels. */
     browserExecutablePath?: string;
+    /** Enable Chinese CNKI/Wanfang/CQVIP search support. */
+    chineseSearchEnabled?: boolean;
+    /** Enable lazy automatic startup of the local cnki-mcp HTTP service. */
+    cnkiMcpAutoStart?: boolean;
+    /** cnki-mcp Streamable HTTP endpoint. */
+    cnkiMcpEndpoint?: string;
+    /** Executable used to launch cnki-mcp, normally `uv`. */
+    cnkiMcpExecutable?: string;
+    /** cnki-mcp checkout directory used by automatic startup. */
+    cnkiMcpProjectDir?: string;
+    /** Maximum time to wait for an automatically started cnki-mcp service. */
+    cnkiMcpStartupTimeoutMs?: number;
+    /** Minimum interval between CNKI business calls. */
+    cnkiMcpMinIntervalMs?: number;
 }
 export declare const Config: Schema<Config>;
 /**
@@ -69,3 +83,6 @@ export declare const Config: Schema<Config>;
  * @param config - schemastery-validated config with defaults applied.
  */
 export declare function apply(ctx: Context, config: Config): void;
+export { CnkiMcpManager } from './chinese/cnki-mcp.js';
+export { ChineseBrowserWorkflow, isDetailUrl, parseSnapshot, providerFromUrl, resolveHref } from './chinese/browser-workflow.js';
+export { applyChineseSearchTools } from './tools/chinese-search.js';

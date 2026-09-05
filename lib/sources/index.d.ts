@@ -22,8 +22,6 @@ export { openaireSource, openaireCandidates, isLowValueUrl, isPdfishUrl, OPENAIR
 export { crossrefPageSource, citationPdfUrlFromHtml } from './crossref_page.js';
 export { grayareaSource, pdfUrlFromGrayAreaHtml, DEFAULT_GRAYAREA_MIRRORS, scihubResolvePdf, scihubPingMirror } from './grayarea.js';
 export type { MirrorProbe } from './grayarea.js';
-export { cnkiSource, wanfangSource, cqvipSource, normalizeCnkiPaper, normalizeWanfangPaper, normalizeCqvipPaper, CHINESE_SOURCE_IDS } from './chinese/index.js';
-export type { CnkiSearchResult, WanfangSearchResult, CqvipSearchResult } from './chinese/index.js';
 /** Everything `apply` needs to wire sources to the live config. */
 export interface SourceRegistryOptions {
     /** Live fetch options (email + timeout), read per request. */
@@ -39,7 +37,7 @@ export interface SourceRegistryOptions {
     sourceMinIntervals?: (() => Record<string, number>) | undefined;
 }
 /** All search-capable source ids, in fan-out order. */
-export declare const SEARCH_SOURCE_IDS: readonly ["openalex", "semantic_scholar", "pubmed", "europe_pmc", "arxiv", "biorxiv", "crossref", "doaj", "core", "google_scholar", "cnki", "wanfang", "cqvip"];
+export declare const SEARCH_SOURCE_IDS: readonly ["openalex", "semantic_scholar", "pubmed", "europe_pmc", "arxiv", "biorxiv", "crossref", "doaj", "core", "google_scholar"];
 /** The built registry: search sources plus the link-enrichment fallback chain. */
 export interface SourceRegistry {
     /** Search sources, filtered by `enabledSources` at call time. */

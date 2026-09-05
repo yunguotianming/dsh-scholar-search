@@ -93,6 +93,8 @@ export function mergePapers(base: PaperMeta, incoming: PaperMeta): PaperMeta {
   if (venue !== undefined) merged.venue = venue
   const abstract = better(base.abstract, incoming.abstract)
   if (abstract !== undefined) merged.abstract = abstract
+  const keywords = [...new Set([...(base.keywords ?? []), ...(incoming.keywords ?? [])])]
+  if (keywords.length > 0) merged.keywords = keywords
   const doi = base.doi ?? incoming.doi
   if (doi !== undefined) merged.doi = doi
   const arxivId = base.arxivId ?? incoming.arxivId

@@ -1,7 +1,7 @@
 {
   "name": "dsh-scholar-search",
-  "version": "0.0.2",
-  "description": "Free academic literature search + OA full-text download for DeepSeek Harness (dsh): scholar_search / scholar_download / scholar_read over OpenAlex, Semantic Scholar, PubMed, Europe PMC, arXiv, bioRxiv/medRxiv, Crossref, DOAJ, CORE, Unpaywall, OpenAIRE, Google Scholar — no paid API, no credits.",
+  "version": "0.2.0",
+  "description": "Academic literature search for DeepSeek Harness: free scholarly APIs, OA full-text workflows, and Chinese paper search across CNKI, Wanfang, and CQVIP.",
   "type": "module",
   "license": "MIT",
   "main": "./lib/index.js",
@@ -19,6 +19,7 @@
   },
   "files": [
     "lib",
+    "vendor/cnki-mcp",
     "cordis.patch.yml",
     "README.md",
     "README_CN.md",

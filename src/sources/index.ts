@@ -22,7 +22,6 @@ import { unpaywallSource } from './unpaywall.js'
 import { openaireSource } from './openaire.js'
 import { crossrefPageSource } from './crossref_page.js'
 import { grayareaSource, DEFAULT_GRAYAREA_MIRRORS } from './grayarea.js'
-import { cnkiSource, wanfangSource, cqvipSource, CHINESE_SOURCE_IDS } from './chinese/index.js'
 
 export { buildThrottle, throttleSource, DEFAULT_SOURCE_MIN_INTERVALS, DEFAULT_MIN_INTERVAL_MS } from '../throttle.js'
 export type { ThrottleTable } from '../throttle.js'
@@ -41,8 +40,6 @@ export { openaireSource, openaireCandidates, isLowValueUrl, isPdfishUrl, OPENAIR
 export { crossrefPageSource, citationPdfUrlFromHtml } from './crossref_page.js'
 export { grayareaSource, pdfUrlFromGrayAreaHtml, DEFAULT_GRAYAREA_MIRRORS, scihubResolvePdf, scihubPingMirror } from './grayarea.js'
 export type { MirrorProbe } from './grayarea.js'
-export { cnkiSource, wanfangSource, cqvipSource, normalizeCnkiPaper, normalizeWanfangPaper, normalizeCqvipPaper, CHINESE_SOURCE_IDS } from './chinese/index.js'
-export type { CnkiSearchResult, WanfangSearchResult, CqvipSearchResult } from './chinese/index.js'
 
 /** Everything `apply` needs to wire sources to the live config. */
 export interface SourceRegistryOptions {
@@ -71,9 +68,6 @@ export const SEARCH_SOURCE_IDS = [
   'doaj',
   'core',
   'google_scholar',
-  'cnki',
-  'wanfang',
-  'cqvip',
 ] as const
 
 /** The built registry: search sources plus the link-enrichment fallback chain. */

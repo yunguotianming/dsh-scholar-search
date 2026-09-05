@@ -10,6 +10,7 @@ Free academic literature search + open-access full-text download for [DeepSeek H
 - **`scholar_download`** — resolves a free full-text PDF through a 10-level fallback chain (OpenAlex locations → Unpaywall → Semantic Scholar → Europe PMC → arXiv/bioRxiv direct links → OpenAIRE → CORE → publisher landing-page meta → OA publisher URL patterns → optional gray area) and saves it to `downloadDir`.
 - **`scholar_scihub_download`** — direct Sci-Hub download, bypassing the OA chain entirely. Concurrently probes all configured mirrors and returns the first available PDF. Requires `allowGrayArea` to be enabled. Use only when you understand the legal risk in your jurisdiction.
 - **`scholar_read`** — downloads (when needed) and extracts PDF text with `pdf-parse`, returned in slices.
+- **`chinese_scholar_search` / `chinese_scholar_detail`** — search CNKI, Wanfang, and CQVIP. CNKI uses a local `cnki-mcp` service (optionally started on demand); Wanfang and CQVIP use the connected `dsh-browser`.
 - A Web settings card (Settings → Plugins) with a config summary and per-source connectivity checks (including per-mirror Sci-Hub reachability).
 
 ## Install
@@ -46,6 +47,8 @@ After install the plugin:
 - appears at `~/.dsh/profiles/web/node_modules/dsh-scholar-search/` (a **hard copy** under the `file:` protocol, not a symlink),
 - is appended to the profile manifest's `dsh.profile.bundles` list,
 - is loaded automatically the next time dsh web starts.
+
+The package includes the `vendor/cnki-mcp` source, `pyproject.toml`, and its GPLv3 license, so users do not need to download the `cnki-mcp` repository separately. Python 3.11+, `uv`, and a Playwright browser runtime are still required on the host. The plugin only lets `uv` install Python dependencies; it never automates login or downloads restricted full text.
 
 ## Enable and verify
 
@@ -122,6 +125,12 @@ The model calls:
 ```
 
 Returns: a relevance-ranked list of papers, each with `title`, `authors`, `year`, `venue`, `doi`, `openAccessPdfUrl` (when known), `oaSources` (which sources surfaced it), etc.
+
+### `chinese_scholar_search` — Chinese literature
+
+Use `query`, an optional `sources` subset (`cnki`, `wanfang`, `cqvip`), and `limit`. CNKI requires one-time login or institutional authentication in a `cnki-mcp` profile. Wanfang and CQVIP require a connected `dsh-browser` tab; site verification remains a manual user action.
+
+Before the first CNKI call, run `uv run cnki-mcp init` once in the `cnki-mcp` checkout to initialize a profile. The plugin never automates login or bypasses verification.
 
 ### `scholar_download` — download a PDF
 
@@ -203,6 +212,17 @@ Every field is optional and hot-updatable from the Web settings page (Settings �
 | `enabledSources` | all | Subset of search sources participating in `scholar_search`. |
 | `sourceTimeoutMs` | `15000` | Per-source request timeout (ms). |
 | `grayAreaMirrors` | 8 built-in mirrors | Gray-area mirror URL templates (`{doi}` placeholder); only used when `allowGrayArea` is true. |
+| `chineseSearchEnabled` | `true` | Enable the Chinese paper tools. |
+| `cnkiMcpAutoStart` | `true` | Start local `cnki-mcp` on the first CNKI call; when false, only an existing service is used. |
+| `cnkiMcpEndpoint` | `http://127.0.0.1:7788/mcp` | `cnki-mcp` Streamable HTTP endpoint. |
+| `cnkiMcpExecutable` | `uv` | Executable used for automatic startup. |
+| `cnkiMcpProjectDir` | bundled `vendor/cnki-mcp` | `cnki-mcp` checkout directory used for automatic startup. |
+| `cnkiMcpStartupTimeoutMs` | `30000` | Startup readiness timeout in milliseconds. |
+| `cnkiMcpMinIntervalMs` | `3000` | Minimum interval between CNKI business calls; values below 1000 ms are rejected. |
+
+### Third-party license
+
+The plugin code is MIT-licensed. The bundled `vendor/cnki-mcp` component retains its GPLv3 license and source; redistribution or modification of that component must comply with GPLv3.
 
 
 ## Download limits and rate limiting

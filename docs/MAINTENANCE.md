@@ -1,7 +1,7 @@
 # dsh-scholar-search 维护文档
 
 > 免费学术文献搜索 + OA 全文下载插件（DeepSeek Harness / Cordis 插件）
-> 版本 0.0.1 · 本文档面向后期维护者，记录设计决策、架构、实现细节和踩过的坑
+> 版本 0.2.0 · 本文档面向后期维护者，记录设计决策、架构、实现细节和踩过的坑
 
 ---
 
@@ -36,8 +36,10 @@
 调研发现：这些付费代理背后调用的 API 本身就有**免费公开版本**（Semantic Scholar Graph API、NCBI E-utilities、arXiv API 等），付费代理只是包了一层转发并计费。因此本插件的目标是：
 
 - **全部检索走免费公开学术 API**，不经过任何付费代理，不消耗积分
+- **中文论文检索覆盖 CNKI、万方和维普**：CNKI 使用随包分发的 cnki-mcp，万方和维普使用现有 dsh-browser 工具
 - **下载走"OA 优先、多源 fallback"链**，尽可能从公开免费渠道拿到全文 PDF
 - 可选灰色渠道（Sci-Hub）作为最后 fallback，默认关闭
+- 登录、机构认证、验证码和受限全文下载由用户处理
 
 ### 1.2 定位
 
@@ -94,6 +96,11 @@ export function apply(ctx: Context, config: Config): void { ... }
   → paper.ts 合并去重 + 质量加权排序
   → 返回 PaperMeta[]
 
+模型调用 chinese_scholar_search
+  → tools/chinese-search.ts
+  → CNKI 调用内置 cnki-mcp；万方/维普串行调用 dsh-browser browser_* 工具
+  → 结果转换为 PaperMeta（含 keywords），分别报告失败来源
+
 模型调用 scholar_download
   → tools/download.ts
   → download.ts (buildFallbackChain)
@@ -131,6 +138,9 @@ dsh-scholar-search/
 │   ├── prompt.ts           # systemPrompt 引导段
 │   ├── throttle.ts         # per-source 最小间隔限流
 │   ├── browser.ts          # Playwright 浏览器下载（反爬出版商重试）
+│   ├── chinese/
+│   │   ├── cnki-mcp.ts     # 内置 cnki-mcp 的 HTTP 客户端、自动启动和生命周期
+│   │   └── browser-workflow.ts # 万方/维普 dsh-browser 工作流
 │   ├── shared/
 │   │   └── constants.ts    # host/client 共享常量（namespace/route/PingResponse）
 │   ├── sources/            # 检索源适配器（每源一个文件）
@@ -149,21 +159,24 @@ dsh-scholar-search/
 │   │   ├── openaire.ts         # OpenAIRE（仅 resolvePdf）
 │   │   ├── crossref_page.ts    # Crossref 落地页解析（仅 resolvePdf，BMC/Springer 主力）
 │   │   └── grayarea.ts         # Sci-Hub 镜像（仅 resolvePdf，默认关闭）
-│   ├── tools/              # 三个 model-facing 工具
+│   ├── tools/              # model-facing 工具
 │   │   ├── search.ts           # scholar_search
 │   │   ├── download.ts         # scholar_download
-│   │   └── read.ts             # scholar_read
+│   │   ├── read.ts              # scholar_read
+│   │   └── chinese-search.ts    # chinese_scholar_search / chinese_scholar_detail
 │   └── client/             # Web 设置卡片（React，浏览器半）
 │       ├── index.ts            # client 入口：注册 settings.plugin.item 槽位
 │       ├── Card.tsx            # 卡片组件（配置摘要 + 可编辑表单 + 连通性测试）
 │       ├── controller.ts       # 状态管理（读 settingsScope + ping 路由 + 编辑写回）
 │       ├── locales.ts          # zh/en 字典 + LocaleNamespaceMap 声明合并
 │       └── styles.ts           # 样式（字符串注入，无 CSS pipeline）
+├── vendor/cnki-mcp/           # GPLv3 CNKI MCP 源码、来源备注和许可证，随包分发
 └── tests/                  # vitest 单测
     ├── paper.spec.ts           # 去重键/排序/abstract 重建
     ├── download.spec.ts        # fetchPdf/safeFilename/pdfCandidates
     ├── sources.spec.ts         # 各源字段映射（mock fetch）
-    └── throttle.spec.ts        # 限流逻辑
+    ├── throttle.spec.ts        # 限流逻辑
+    └── chinese.spec.ts         # 中文快照解析、URL 校验和 cnki-mcp 响应规范化
 ```
 
 ---
@@ -181,6 +194,7 @@ export interface PaperMeta {
   year?: number
   venue?: string
   abstract?: string
+  keywords?: string[]
   doi?: string
   arxivId?: string
   pmid?: string
@@ -220,6 +234,8 @@ export interface Runtime {
   browser?: BrowserDownloader                // 可选浏览器下载
   resolveDownloadDir: (exec) => string       // 每次调用从会话工作区解析下载目录
   pdfTimeoutMs / toolTimeoutMs / readMaxChars: number
+  cnkiMcp?: CnkiMcpManager
+  chineseSearchEnabled: () => boolean
 }
 ```
 
@@ -229,7 +245,7 @@ export interface Runtime {
 
 ## 5. 检索源详解
 
-### 5.1 搜索源（10 个）
+### 5.1 公开 API 搜索源（10 个）
 
 | 源 | 端点 | 认证 | 覆盖 | 默认间隔 |
 |---|---|---|---|---|
@@ -253,7 +269,19 @@ export interface Runtime {
 | crossref_page | 解析出版商落地页 `citation_pdf_url` meta 标签，**BMC/Springer 主力通道**（~95% 成功率） |
 | grayarea | Sci-Hub 镜像（默认关闭） |
 
-### 5.3 合并去重与排序（paper.ts）
+### 5.3 中文论文检索
+
+中文检索由独立的 `chinese_scholar_search` 工具提供，不改变普通 `scholar_search` 的 API source fan-out。
+
+| 来源 | 实现 | 登录态 | 备注 |
+|---|---|---|---|
+| CNKI | 内置 `vendor/cnki-mcp` 的 Streamable HTTP 客户端 | `~/.cnki-mcp` 持久化 profile | 首次需手工 `cnki-mcp init`，可按需自动启动服务 |
+| 万方 | dsh-browser `browser_*` 嵌套调用 | dsh-browser 当前受控标签页 | 读取快照和详情文本，不执行任意 JavaScript |
+| 维普 | dsh-browser `browser_*` 嵌套调用 | dsh-browser 当前受控标签页 | 验证码和访问限制由用户处理 |
+
+`chinese_scholar_detail` 将三个站点的详情字段转换为 `PaperMeta`，并保留 `keywords`。中文工具串行执行，避免同时操作一个受控标签页。
+
+### 5.4 合并去重与排序（paper.ts）
 
 **去重键优先级**（参考 QwenPaw local_paper_hub）：
 ```
@@ -440,6 +468,13 @@ ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
 | `sourceMinIntervals` | 见 §8 | per-source 限流间隔覆盖 |
 | `browserDownload` | false | 浏览器重试反爬下载 |
 | `browserExecutablePath` | — | 浏览器路径（缺省探测 chrome/msedge） |
+| `chineseSearchEnabled` | true | 启用中文论文工具 |
+| `cnkiMcpAutoStart` | true | 首次 CNKI 调用时自动启动内置 cnki-mcp |
+| `cnkiMcpEndpoint` | `http://127.0.0.1:7788/mcp` | cnki-mcp Streamable HTTP 地址 |
+| `cnkiMcpExecutable` | `uv` | 自动启动命令 |
+| `cnkiMcpProjectDir` | 插件内置 `vendor/cnki-mcp` | cnki-mcp 项目目录，可覆盖 |
+| `cnkiMcpStartupTimeoutMs` | 30000 | 自动启动等待时间 |
+| `cnkiMcpMinIntervalMs` | 3000 | CNKI 业务调用间隔，下限 1000ms |
 
 ---
 
@@ -466,7 +501,7 @@ pnpm run test         # vitest
     ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
     "./client": { "types": "./lib/client-types/client/index.d.ts", "default": "./lib/client.js" }
   },
-  "files": ["lib", "cordis.patch.yml", "README.md", "README_CN.md", "LICENSE"],
+  "files": ["lib", "vendor/cnki-mcp", "cordis.patch.yml", "README.md", "README_CN.md", "LICENSE"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": { "platform": "web", "inject": [...] }
@@ -510,14 +545,17 @@ node "$HOME/.dsh/profiles/node_modules/@deepseek-ai/dsh/lib/bin.js" plugin --pro
 
 ## 14. 测试
 
-40 个单测（vitest），覆盖：
+55 个单测（vitest），覆盖：
 
 - **paper.spec.ts**：normalizeTitle、paperKeys、mergePapers、mergePaperLists、scorePaper、mergeAndRank、rebuildAbstract
 - **download.spec.ts**：looksLikePdf、safeFilename、pdfCandidatesFor、fetchPdfBytes（mock fetch）
 - **sources.spec.ts**：normalizeOpenAlexWork、parseArxivFeed、normalizeSerpApiResult、europePmcOfficialPdfUrl、europePmcPmcidWithPdf、openAlexPdfCandidates、各源 search（mock fetch）
 - **throttle.spec.ts**：buildThrottle 间隔/独立/abort、throttleSource 包装
+- **chinese.spec.ts**：中文快照解析、URL 校验和 cnki-mcp 响应规范化
 
 mock 方式：`vi.stubGlobal('fetch', vi.fn(...))` 录制真实 API 响应 JSON。
+
+公开搜索 smoke 使用关键词“人工智能”验证万方和维普页面各返回 20 条结果，未登录且未触发下载；OpenAlex 和 Crossref 中文查询也能返回结果。该 smoke 验证站点公开搜索和参考解析脚本，完整 dsh-browser 工具链仍需在已连接扩展的会话中验证。CNKI 因本机尚无 `~/.cnki-mcp` profile 未执行真实查询。
 
 ---
 
@@ -566,6 +604,14 @@ OpenAlex 的 `abstract_inverted_index` 是词→位置数组，不是纯文本�
 - 加 `enrich:openalex` 反查步骤
 - `attempted` 记录所有尝试过的级别（即使没候选）
 
+### 15.9 中文检索与第三方运行时
+
+- `cnki-mcp` 源码位于 `vendor/cnki-mcp`，许可证为 GPLv3，不能按 MIT 组件处理。
+- `vendor/cnki-mcp/VENDOR.md` 固定上游仓库、提交 SHA 和版本；升级 vendor 时同步更新。
+- 自动启动只管理插件自己创建的 `uv` 子进程；服务已有时直接复用，不停止外部进程。
+- 首次 CNKI 使用仍需用户执行一次 `uv run cnki-mcp init` 完成登录或机构认证；凭据和 profile 不进入插件包。
+- 万方和维普依赖 dsh-browser 当前的文本工具，无法执行中文 skill 原有的任意页面 JavaScript。
+
 ---
 
 ## 16. 已知限制与未来方向
@@ -577,6 +623,7 @@ OpenAlex 的 `abstract_inverted_index` 是词→位置数组，不是纯文本�
 - **arXiv 在非 CS 领域噪音大**：护理/医学检索会混入 CS/ML 论文，未来可加 `excludeSources` 学科过滤
 - **基础设施故障**（如 nsuworks DNS 故障）：标记为失败但不区分"待重试"与"真无 OA"
 - **批量下载接口未实现**：目前逐篇调用
+- **中文检索需要额外运行时**：CNKI 需要 Python 3.11+、uv、Playwright 和已初始化 profile；万方/维普需要连接的 dsh-browser 标签页
 
 ### 未来方向（按优先级）
 

@@ -10,6 +10,7 @@
 - **`scholar_download`** — 按 10 级 fallback 链解析免费全文 PDF（OpenAlex locations → Unpaywall → Semantic Scholar → Europe PMC → arXiv/bioRxiv 直链 → OpenAIRE → CORE → 出版商落地页 meta → OA 出版商 URL 模式 → 可选灰色渠道），保存到 `downloadDir`。
 - **`scholar_scihub_download`** — 直接通过 Sci-Hub 下载，完全绕过 OA fallback 链。并发探测所有配置的镜像，返回第一个可用的 PDF。需要启用 `allowGrayArea`。请确保你了解所在司法辖区的法律风险后再使用。
 - **`scholar_read`** — 需要时先下载，再用 `pdf-parse` 抽取 PDF 文本，分片返回。
+- **`chinese_scholar_search` / `chinese_scholar_detail`** — 搜索 CNKI、万方和维普。CNKI 通过本地 `cnki-mcp`（可按需自动启动），万方和维普使用已连接的 `dsh-browser`。
 - Web 设置卡片（Settings → Plugins）：配置摘要 + 各源连通性测试（包括 Sci-Hub 各镜像的连通性）。
 
 ## 安装
@@ -48,6 +49,8 @@ dsh plugin --profile web add "file:E:/project-workspace/ai-projects/deepseek-har
 - 出现在 `~/.dsh/profiles/web/node_modules/dsh-scholar-search/`（file: 协议下是**硬拷贝**，不是符号链接）
 - 追加到 profile manifest 的 `dsh.profile.bundles` 列表末尾
 - 下次启动 dsh web 时自动加载
+
+插件已内置 `vendor/cnki-mcp` 的源码、`pyproject.toml` 和 GPLv3 许可证，不需要另外下载 `cnki-mcp` 仓库。首次使用 CNKI 时仍需本机安装 Python 3.11+、`uv` 和 Playwright 浏览器运行时；插件只会通过 `uv` 安装 Python 依赖，不会自动登录或下载受限全文。
 
 ## 启用与验证
 
@@ -128,6 +131,12 @@ dsh plugin --profile web remove dsh-scholar-search
 ```
 
 返回：按相关性排序的文献列表，每篇带 `title`、`authors`、`year`、`venue`、`doi`、`openAccessPdfUrl`（如有）、`oaSources`（命中了哪些源）等字段。
+
+### `chinese_scholar_search` — 中文论文检索
+
+参数为 `query`、`sources`（`cnki`、`wanfang`、`cqvip` 的子集）和 `limit`。CNKI 需要先在 `cnki-mcp` profile 中完成一次登录或机构认证；首次调用可由插件自动启动已配置的 `cnki-mcp` 服务。万方和维普需要 `dsh-browser` 已连接到可操作的普通网页标签页，站点验证码仍需用户手工完成。
+
+首次使用 CNKI 前，在 `cnki-mcp` 目录执行一次 `uv run cnki-mcp init` 完成 profile 初始化；插件不会自动替用户登录或绕过验证码。
 
 ### `scholar_download` — 下载 PDF
 
@@ -216,6 +225,17 @@ dsh plugin --profile web remove dsh-scholar-search
 | `grayAreaMirrors`       | 8 个内置镜像       | 灰色渠道镜像 URL 模板（`{doi}` 占位符）；仅 `allowGrayArea` 为 true 时使用。          |
 | `browserDownload`        | `false`           | 用真实浏览器（Playwright + 系统 Chrome/Edge）重试被反爬拦截的出版商下载。见下方说明。 |
 | `browserExecutablePath`  | —                  | 浏览器可执行文件路径（可选）；缺省自动探测 chrome/msedge 通道。 |
+| `chineseSearchEnabled` | `true` | 启用中文论文工具。 |
+| `cnkiMcpAutoStart` | `true` | CNKI 查询时自动启动本地 `cnki-mcp`；关闭后只连接已运行服务。 |
+| `cnkiMcpEndpoint` | `http://127.0.0.1:7788/mcp` | `cnki-mcp` Streamable HTTP 地址。 |
+| `cnkiMcpExecutable` | `uv` | 自动启动使用的可执行文件。 |
+| `cnkiMcpProjectDir` | 插件内置 `vendor/cnki-mcp` | `cnki-mcp` 项目目录；可覆盖。 |
+| `cnkiMcpStartupTimeoutMs` | `30000` | 等待 `cnki-mcp` 就绪的毫秒数。 |
+| `cnkiMcpMinIntervalMs` | `3000` | CNKI 业务调用的最小间隔，低于 1000 毫秒的配置会被拒绝。 |
+
+### 第三方许可证
+
+插件主体使用 MIT 许可证；随包分发的 `vendor/cnki-mcp` 保留其 GPLv3 许可证和源代码。重新分发或修改该组件时必须遵守 GPLv3。
 
 
 ## 下载限制与速率

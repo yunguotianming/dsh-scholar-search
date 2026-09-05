@@ -7,7 +7,8 @@
  * @module dsh-scholar-search
  */
 
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -22,9 +23,13 @@ import { BrowserDownloader } from './browser.js'
 import { applySearchTool } from './tools/search.js'
 import { applyDownloadTool, applyScihubDownloadTool } from './tools/download.js'
 import { applyReadTool } from './tools/read.js'
+import { applyChineseSearchTools } from './tools/chinese-search.js'
+import { CnkiMcpManager } from './chinese/cnki-mcp.js'
 import { PING_ROUTE, SETTINGS_NAMESPACE } from './shared/constants.js'
 import type { PingResponse } from './shared/constants.js'
 import type { Runtime } from './runtime.js'
+
+const DEFAULT_CNKI_MCP_PROJECT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../vendor/cnki-mcp')
 
 export type { PaperMeta, ScholarSource, SearchQuery } from './types.js'
 export { normalizeTitle, paperKeys, mergePapers, mergePaperLists, scorePaper, mergeAndRank, SOURCE_QUALITY } from './paper.js'
@@ -43,7 +48,7 @@ export const name = 'scholar-search'
 export const inject = ['tools', 'systemPrompt']
 
 /** Version string sent in the `User-Agent`; kept in sync with package.json. */
-export const VERSION = '0.0.1'
+export const VERSION = '0.2.0'
 
 export { PING_ROUTE, SETTINGS_NAMESPACE } from './shared/constants.js'
 export type { PingResponse } from './shared/constants.js'
@@ -82,6 +87,20 @@ export interface Config {
   browserDownload?: boolean
   /** Explicit browser executable path; absent probes the chrome/msedge channels. */
   browserExecutablePath?: string
+  /** Enable Chinese CNKI/Wanfang/CQVIP search support. */
+  chineseSearchEnabled?: boolean
+  /** Enable lazy automatic startup of the local cnki-mcp HTTP service. */
+  cnkiMcpAutoStart?: boolean
+  /** cnki-mcp Streamable HTTP endpoint. */
+  cnkiMcpEndpoint?: string
+  /** Executable used to launch cnki-mcp, normally `uv`. */
+  cnkiMcpExecutable?: string
+  /** cnki-mcp checkout directory used by automatic startup. */
+  cnkiMcpProjectDir?: string
+  /** Maximum time to wait for an automatically started cnki-mcp service. */
+  cnkiMcpStartupTimeoutMs?: number
+  /** Minimum interval between CNKI business calls. */
+  cnkiMcpMinIntervalMs?: number
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -101,6 +120,13 @@ export const Config: Schema<Config> = Schema.object({
   sourceMinIntervals: Schema.dict(Schema.number()).default({}).description('Per-source minimum request interval (ms), overriding the polite-rate defaults.'),
   browserDownload: Schema.boolean().default(false).description('Retry bot-blocked publisher downloads through a real browser (Playwright + system Chrome/Edge). Off by default.'),
   browserExecutablePath: Schema.string().default('').description('Explicit browser executable path (optional); absent probes the chrome/msedge channels.'),
+  chineseSearchEnabled: Schema.boolean().default(true).description('Enable Chinese paper search on CNKI, Wanfang, and CQVIP.'),
+  cnkiMcpAutoStart: Schema.boolean().default(true).description('Start cnki-mcp automatically when CNKI search is first used.'),
+  cnkiMcpEndpoint: Schema.string().default('http://127.0.0.1:7788/mcp').description('cnki-mcp Streamable HTTP endpoint.'),
+  cnkiMcpExecutable: Schema.string().default('uv').description('Executable used to start cnki-mcp.'),
+  cnkiMcpProjectDir: Schema.string().default(DEFAULT_CNKI_MCP_PROJECT_DIR).description('cnki-mcp project directory for automatic startup.'),
+  cnkiMcpStartupTimeoutMs: Schema.number().default(30_000).description('Startup wait budget for cnki-mcp in milliseconds.'),
+  cnkiMcpMinIntervalMs: Schema.number().default(3_000).description('Minimum interval between CNKI business calls; protects the account from burst traffic.'),
 })
 
 /** Complete config after schemastery applies every default. */
@@ -141,9 +167,32 @@ export function apply(ctx: Context, config: Config): void {
     const value = resolved[field]
     if (!Number.isInteger(value) || value < 1) throw new Error(`scholar-search: ${field} must be a positive integer`)
   }
+  if (!Number.isInteger(resolved.cnkiMcpStartupTimeoutMs) || resolved.cnkiMcpStartupTimeoutMs < 1) {
+    throw new Error('scholar-search: cnkiMcpStartupTimeoutMs must be a positive integer')
+  }
+  if (!Number.isInteger(resolved.cnkiMcpMinIntervalMs) || resolved.cnkiMcpMinIntervalMs < 1_000) {
+    throw new Error('scholar-search: cnkiMcpMinIntervalMs must be an integer of at least 1000 ms')
+  }
+  try {
+    const endpoint = new URL(resolved.cnkiMcpEndpoint)
+    if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') throw new Error('unsupported protocol')
+  } catch {
+    throw new Error('scholar-search: cnkiMcpEndpoint must be an http(s) URL')
+  }
 
   // Live config source: the settings section swaps it on hot reload.
   let current: () => ResolvedConfig = () => resolved
+
+  const cnkiMcp = new CnkiMcpManager(() => ({
+    enabled: current().chineseSearchEnabled,
+    autoStart: current().cnkiMcpAutoStart,
+    endpoint: current().cnkiMcpEndpoint,
+    executable: current().cnkiMcpExecutable,
+    projectDir: current().cnkiMcpProjectDir,
+    startupTimeoutMs: current().cnkiMcpStartupTimeoutMs,
+    minIntervalMs: current().cnkiMcpMinIntervalMs,
+  }))
+  ctx.effect(() => () => { void cnkiMcp.close() }, 'scholar-search: close cnki-mcp')
 
   const fetchOptions = () => ({
     timeoutMs: current().sourceTimeoutMs,
@@ -182,12 +231,15 @@ export function apply(ctx: Context, config: Config): void {
     pdfTimeoutMs: resolved.pdfTimeoutMs,
     toolTimeoutMs: resolved.toolTimeoutMs,
     readMaxChars: resolved.readMaxChars,
+    cnkiMcp,
+    chineseSearchEnabled: () => current().chineseSearchEnabled,
   }
 
   applySearchTool(ctx, runtime)
   applyDownloadTool(ctx, runtime)
   applyScihubDownloadTool(ctx, runtime, () => current().allowGrayArea, () => current().grayAreaMirrors)
   applyReadTool(ctx, runtime)
+  applyChineseSearchTools(ctx, runtime)
 
   const guidance = buildGuidance()
   ctx.systemPrompt.section({ name: guidance.name, order: 150, text: guidance.text })
@@ -268,3 +320,7 @@ export function apply(ctx: Context, config: Config): void {
     })
   })
 }
+
+export { CnkiMcpManager } from './chinese/cnki-mcp.js'
+export { ChineseBrowserWorkflow, isDetailUrl, parseSnapshot, providerFromUrl, resolveHref } from './chinese/browser-workflow.js'
+export { applyChineseSearchTools } from './tools/chinese-search.js'

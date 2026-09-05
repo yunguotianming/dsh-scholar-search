@@ -5,6 +5,7 @@
  */
 import type { FetchOptions } from './http.js';
 import type { SourceRegistry } from './sources/index.js';
+import type { CnkiMcpManager } from './chinese/cnki-mcp.js';
 /**
  * The session workspace a tool call resolves against. Matches the shape every
  * dsh tool reads (`exec.agent?.session.header.cwd`); declared locally so the
@@ -51,4 +52,8 @@ export interface Runtime {
     toolTimeoutMs: number;
     /** Default `scholar_read` slice length. */
     readMaxChars: number;
+    /** Optional CNKI MCP bridge; the manager starts only on the first CNKI call. */
+    cnkiMcp?: CnkiMcpManager | undefined;
+    /** Whether browser-backed Chinese search is enabled. */
+    chineseSearchEnabled: () => boolean;
 }

@@ -38,7 +38,7 @@ export function requestSignal(signal: AbortSignal | undefined, timeoutMs: number
 
 /** `User-Agent` with the polite-pool email when configured. */
 export function userAgent(email: string | undefined): string {
-  const base = 'dsh-scholar-search/0.0.1 (+https://github.com/deepseek-ai/deepseek-harness)'
+  const base = 'dsh-scholar-search/0.2.0 (+https://github.com/deepseek-ai/deepseek-harness)'
   return email !== undefined && email.length > 0 ? `${base}; mailto:${email}` : base
 }
 

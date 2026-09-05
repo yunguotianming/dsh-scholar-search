@@ -1,11 +1,11 @@
-# dsh-scholar-search 插件结构文档（审阅稿）
+# dsh-scholar-search 插件结构文档
 
 ## 1. 定位与目标
 
 - **名称**：`dsh-scholar-search`（npm 包名，与 dsh-ai4scholar 同级的独立第三方插件）
 - **位置**：`E:\project-workspace\ai-projects\deepseek-harness\plugins\self-developed\dsh-scholar-search\`
 - **性质**：独立 npm 包，**不属于** dsh 主仓库 workspace；构建后通过 `dsh plugin --profile web add dsh-scholar-search` 安装
-- **目标**：替代 dsh-ai4scholar 的付费检索能力——全部检索走免费公开 API（OpenAlex / Semantic Scholar / PubMed / Europe PMC / arXiv / bioRxiv·medRxiv / Crossref / DOAJ / CORE / OpenAIRE / Unpaywall），下载走"OA 优先、多源 fallback"链，可选灰色渠道（默认关闭），不消耗任何积分
+- **目标**：免费公开 API 检索、合法 OA 全文处理，并提供 CNKI、万方和维普中文论文检索。CNKI 由内置 `vendor/cnki-mcp` 通过本地 MCP 服务提供，万方和维普使用已连接的 dsh-browser；不自动登录、绕过验证码或下载受限全文。
 
 ## 2. 安装与加载机制（与 dsh-ai4scholar 相同）
 
@@ -40,12 +40,17 @@ plugins/self-developed/dsh-scholar-search/
 ├── cordis.patch.yml        # dsh 挂载声明（见 §2）
 ├── README.md / README_CN.md
 ├── LICENSE                 # MIT
+├── vendor/
+│   └── cnki-mcp/           # 随包分发的 GPLv3 CNKI MCP 源码、来源备注、依赖声明和许可证
 ├── src/
 │   ├── index.ts            # Cordis 插件入口：name/inject/Config/apply（无 default export）
 │   ├── types.ts            # PaperMeta 归一化模型 + ScholarSource 接口（仅类型）
 │   ├── paper.ts            # 归一化/去重/合并/质量加权排序（借鉴 local_paper_hub ranker/dedupe）
 │   ├── download.ts         # PDF 下载 fallback 链
 │   ├── pdf.ts              # PDF 文本抽取（pdf-parse）
+│   ├── chinese/
+│   │   ├── cnki-mcp.ts     # cnki-mcp HTTP 客户端、按需启动和进程清理
+│   │   └── browser-workflow.ts # 万方/维普 dsh-browser 工作流和快照解析
 │   ├── prompt.ts           # systemPrompt 引导段
 │   ├── sources/
 │   │   ├── openalex.ts         # 搜索主干，免费无 key，带 OA 状态+PDF 链接
@@ -64,16 +69,22 @@ plugins/self-developed/dsh-scholar-search/
 │   ├── tools/
 │   │   ├── search.ts           # scholar_search 工具
 │   │   ├── download.ts         # scholar_download 工具
-│   │   └── read.ts             # scholar_read 工具
-│   └── client/             # Web 设置页卡片（第一版就做，见 §9）
-│       └── index.tsx
+│   │   ├── read.ts             # scholar_read 工具
+│   │   └── chinese-search.ts   # chinese_scholar_search / chinese_scholar_detail
+│   └── client/             # Web 设置页卡片（见 §9）
+│       ├── index.ts
+│       ├── Card.tsx
+│       ├── controller.ts
+│       ├── locales.ts
+│       └── styles.ts
 └── tests/                  # vitest，mock fetch 的适配器单测
     ├── openalex.spec.ts
     ├── semanticscholar.spec.ts
     ├── pubmed.spec.ts
     ├── arxiv.spec.ts
     ├── paper.spec.ts         # 去重键/质量加权排序/OpenAlex abstract 重建
-    └── download.spec.ts      # fallback 链顺序与降级行为
+    ├── download.spec.ts      # fallback 链顺序与降级行为
+    └── chinese.spec.ts       # 中文快照解析、URL 校验和 cnki-mcp 响应规范化
 ```
 
 ## 4. package.json 要点
@@ -81,7 +92,7 @@ plugins/self-developed/dsh-scholar-search/
 ```jsonc
 {
   "name": "dsh-scholar-search",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT",
   "main": "./lib/index.js",
@@ -91,7 +102,7 @@ plugins/self-developed/dsh-scholar-search/
     "./client": { "types": "./lib/client-types/client/index.d.ts", "default": "./lib/client.js" },  // 可选
     "./package.json": "./package.json"
   },
-  "files": ["lib", "cordis.patch.yml", "README.md", "README_CN.md", "LICENSE"],
+  "files": ["lib", "vendor/cnki-mcp", "cordis.patch.yml", "README.md", "README_CN.md", "LICENSE"],
   "sideEffects": false,
   "keywords": ["dsh-plugin", "deepseek-harness", "academic", "paper-search", "openalex", "arxiv", ...],
   "engines": { "node": ">=22.19.0" },
@@ -141,13 +152,22 @@ export interface Config {
   enabledSources?: string[]
   /** 每源超时 ms。默认 15000。 */
   sourceTimeoutMs?: number
+  /** 启用 CNKI、万方、维普检索。默认 true。 */
+  chineseSearchEnabled?: boolean
+  /** 首次 CNKI 调用时启动内置 cnki-mcp。默认 true。 */
+  cnkiMcpAutoStart?: boolean
+  cnkiMcpEndpoint?: string
+  cnkiMcpExecutable?: string
+  cnkiMcpProjectDir?: string
+  cnkiMcpStartupTimeoutMs?: number
+  cnkiMcpMinIntervalMs?: number
 }
 export const Config: z<Config> = z.object({ ... })   // 每个字段带 description → 免费得到 settings UI 表单
 
 export function apply(ctx: Context, config: Config): void {
-  // 1. ctx.settings?.installSection('scholar-search', Config, config, ...)  // 可视化配置
+  // 1. settings.register + scope.watch：配置热更新
   // 2. ctx.systemPrompt.section({ name: 'tool:scholar_search', ... })        // 引导段
-  // 3. ctx.tools.register(defineTool(...)) × 3                               // scholar_search / scholar_download / scholar_read
+  // 3. ctx.tools.register(defineTool(...))：普通和中文检索、下载、阅读工具
 }
 ```
 
@@ -155,6 +175,7 @@ export function apply(ctx: Context, config: Config): void {
 - 无 default export（否则 Loader 丢弃整个 namespace）；
 - 注册全部走 effect（dispose 自动卸载）；
 - `email`/`apiKey` 走 settings section（支持 UI 热更新），不硬编码。
+- `cnki-mcp` 进程只在首次 CNKI 调用时按需启动；插件卸载时只停止自己启动的进程。
 
 ## 6. 核心抽象（src/types.ts）
 
@@ -166,6 +187,7 @@ export interface PaperMeta {
   year?: number
   venue?: string
   abstract?: string
+  keywords?: string[]
   doi?: string
   arxivId?: string
   pmid?: string
@@ -196,7 +218,7 @@ export interface SearchQuery {
 
 ## 7. 检索源清单与字段映射
 
-**搜索源（10 个，实现 `search`）：**
+**公开 API 搜索源（10 个，实现 `search`）：**
 
 | 源 | 端点 | 认证 | 覆盖 | PDF 字段 |
 |---|---|---|---|---|
@@ -209,6 +231,16 @@ export interface SearchQuery {
 | Crossref | `api.crossref.org/works` | mailto | 元数据兜底（DOI 注册局，覆盖最全） | `link[]`（多需订阅）、`license` |
 | DOAJ | `doaj.org/api/v2/search/articles` | 无 | OA 期刊 | `bibjson.link` |
 | CORE | `api.core.ac.uk/v3/search/works` | 免费 key（可选） | 全球最大 OA 仓储聚合 | `downloadUrl` |
+
+**中文论文检索（独立工具，不加入上述 API fan-out）：**
+
+| 来源 | 实现 | 前置条件 |
+|---|---|---|
+| CNKI | 内置 `vendor/cnki-mcp` 的 HTTP MCP 客户端 | Python 3.11+、uv、Playwright；首次需手工初始化 CNKI profile |
+| 万方 | dsh-browser 的 `browser_*` 嵌套调用 | 已连接的 dsh-browser 普通网页标签页 |
+| 维普 | dsh-browser 的 `browser_*` 嵌套调用 | 已连接的 dsh-browser 普通网页标签页 |
+
+中文工具配置：`chineseSearchEnabled` 默认开启；`cnkiMcpAutoStart` 默认开启；`cnkiMcpEndpoint` 默认 `http://127.0.0.1:7788/mcp`；`cnkiMcpExecutable` 默认 `uv`；`cnkiMcpProjectDir` 默认插件内置 `vendor/cnki-mcp`；`cnkiMcpStartupTimeoutMs` 默认 30000ms；`cnkiMcpMinIntervalMs` 默认 3000ms，最小允许 1000ms。首次 CNKI 使用仍需用户在 profile 中完成一次 `cnki-mcp init`。
 
 **OA 补链源（4 个，仅实现 `resolvePdf`，搜索结果经它们补 `pdfUrl`）：**
 
@@ -270,7 +302,7 @@ const SOURCE_QUALITY = {
 
 ## 9. 可视化管理（两层都做）
 
-**第一层**：`ctx.settings.installSection('scholar-search', Config, config)`。Config schema 每个字段写 `description` 后，dsh Web 设置页自动生成表单——源开关、email、apiKey、下载目录、allowGrayArea 全部可视化热更新。
+**第一层**：Host 端使用 `settings.register()` 注册配置命名空间，并通过 `scope.watch()` 接收热更新。Config schema 每个字段写 `description` 后，dsh Web 设置页生成表单——源开关、email、apiKey、下载目录、allowGrayArea 和 CNKI MCP 参数均可更新。
 
 **第二层（第一版就做）**：`src/client/index.tsx` 设置卡片（仿 dsh-ai4scholar），注册 `settings.plugin.item` 槽位（keyed by namespace，与第一层自动配对），提供：
 - 各源连通性测试按钮（ping 每个 API 返回延迟/可用性）
@@ -279,13 +311,15 @@ const SOURCE_QUALITY = {
 
 **关键坑**：dsh 主仓库的 client 打包 preset（`packages/client/tsdown.client.ts` 的 `clientBundle`）**未发布**，外部包必须自己复刻 lazy-CJS factory 产物格式——`tsdown.config.ts` 参考 `docs/cookbook/adding-a-settings-card.md` 和 `packages/client/ui-settings-plugins` 的三行配置手写等价物。
 
-## 10. 三个 model-facing 工具
+## 10. Model-facing 工具
 
 | 工具 | 参数 | 返回 |
 |---|---|---|
 | `scholar_search` | `query`、`sources?`、`limit?`(默认20)、`yearFrom?`、`yearTo?` | 并行查启用源 → DOI/标题去重合并 → `PaperMeta[]`（带 `openAccessPdfUrl`） |
 | `scholar_download` | `identifier`（DOI/arxivId/PMID/标题）或 `paper`（直接传搜索结果项）、`filename?` | fallback 链下载 → `{ path, source, url, sizeBytes }` 或 `{ error: 'no-free-fulltext', triedSources: [...] }` |
 | `scholar_read` | `path` 或 `identifier`、`maxChars?`(默认 8000) | 下载（如需）+ pdf-parse 抽取 → `{ text, pageCount, truncated }` |
+| `chinese_scholar_search` | `query`、`sources?`、`limit?`(默认10) | 检索 CNKI、万方、维普，独立报告结果和失败原因 |
+| `chinese_scholar_detail` | `url` | 读取中文论文详情元数据，不执行全文下载 |
 
 systemPrompt 引导段告知模型：查文献用 `scholar_search` 而非 `web_search`；下载用 `scholar_download`；全文阅读用 `scholar_read`。
 
@@ -300,16 +334,17 @@ cd <dsh 用户目录>
 dsh plugin --profile web add file:E:/project-workspace/ai-projects/deepseek-harness/plugins/self-developed/dsh-scholar-search
 ```
 
-- 单测：mock fetch + 录制的真实 API 响应，验证字段映射/去重/fallback 顺序；
+- 单测：mock fetch + 录制的真实 API 响应，验证字段映射/去重/fallback 顺序；中文测试覆盖快照解析、URL 校验和 cnki-mcp MCP 响应规范化；
 - 手动 e2e：`scholar_search("attention is all you need")` 返回多源合并结果；`scholar_download` 对 arXiv:1706.03762 成功下载 PDF；
 - peerDependencies 版本下限对齐 dsh-ai4scholar 已验证可用的 `>=0.1.0-rc.6`。
 
 ## 12. 明确不做
 
-- 不接 Google Scholar（无官方 API，爬虫需代理池，性价比低）；
+- 不直接爬取 Google Scholar；可选支持仅通过用户配置的 SerpAPI key 调用。
 - 不做 auto-cite / sci-draw / 余额查询（付费代理的增值服务）；
 - 不修改 dsh 主仓库（纯外部插件）；
 - 默认不开灰色渠道。
+- 不自动登录 CNKI、不自动完成验证码、不下载 CNKI/万方/维普受限全文；`scholar_download` 只处理合法 OA 链接。
 
 ## 13. 参考实现
 
@@ -335,4 +370,6 @@ dsh plugin --profile web add file:E:/project-workspace/ai-projects/deepseek-harn
 2. **设置卡片（§9 第二层）**：第一版就做 ✅
 3. **灰色渠道**：保留 `allowGrayArea` 开关（默认关）✅
 4. **构建工具**：host 端纯 `tsc`；client 端用 `tsdown` 复刻 `clientBundle` preset ✅
-5. **工具数量**：超出单个插件的范畴——用户目标是把 dsh 扩展为个人科研工作台，见 `WORKBENCH.md` 的整体规划。
+5. **中文检索**：使用独立的 `chinese_scholar_search` / `chinese_scholar_detail`，不混入普通 API fan-out ✅
+6. **浏览器边界**：保持第三方 dsh-browser 不变；万方和维普只使用现有 `browser_*` 工具 ✅
+7. **CNKI 分发**：`vendor/cnki-mcp` 随 npm 包分发并保留 GPLv3 许可证，按需自动启动服务 ✅

@@ -11,6 +11,7 @@ export interface PaperMeta {
   year?: number
   venue?: string
   abstract?: string
+  keywords?: string[]
   doi?: string
   arxivId?: string
   pmid?: string

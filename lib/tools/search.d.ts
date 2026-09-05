@@ -31,6 +31,12 @@ export declare const PAPER_META_SCHEMA: {
         readonly abstract: {
             readonly type: "string";
         };
+        readonly keywords: {
+            readonly type: "array";
+            readonly items: {
+                readonly type: "string";
+            };
+        };
         readonly doi: {
             readonly type: "string";
         };
@@ -110,6 +116,12 @@ export declare const SEARCH_OUTPUT_SCHEMA: {
                     };
                     readonly abstract: {
                         readonly type: "string";
+                    };
+                    readonly keywords: {
+                        readonly type: "array";
+                        readonly items: {
+                            readonly type: "string";
+                        };
                     };
                     readonly doi: {
                         readonly type: "string";
