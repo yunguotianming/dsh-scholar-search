@@ -10,6 +10,15 @@ import { fetchText, isHttpUrl, normalizeDoi } from '../http.js'
 import type { FetchOptions } from '../http.js'
 import type { PaperMeta, ScholarSource } from '../types.js'
 
+function htmlUrl(raw: string, baseUrl: string): string | undefined {
+  try {
+    const url = new URL(raw.trim().replace(/&(?:amp|#38|#x26);/gi, '&'), baseUrl)
+    return isHttpUrl(url.href) ? url.href : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Extract the `citation_pdf_url` meta content out of an HTML page. Exported for tests. */
 export function citationPdfUrlFromHtml(html: string, baseUrl: string): string | undefined {
   const metaRe = /<meta\b[^>]*>/gi
@@ -21,14 +30,29 @@ export function citationPdfUrlFromHtml(html: string, baseUrl: string): string | 
     const contentMatch = /\bcontent\s*=\s*"([^"]+)"|\bcontent\s*=\s*'([^']+)'/i.exec(tag)
     const raw = contentMatch?.[1] ?? contentMatch?.[2]
     if (raw === undefined || raw.trim().length === 0) continue
-    try {
-      const resolved = new URL(raw.trim(), baseUrl).toString()
-      if (isHttpUrl(resolved)) return resolved
-    } catch {
-      continue
-    }
+    const resolved = htmlUrl(raw, baseUrl)
+    if (resolved !== undefined) return resolved
   }
   return undefined
+}
+
+/** 读取公开落地页声明的 PDF，或同站的机构库下载入口。 */
+export function pdfLinksFromLandingPage(html: string, baseUrl: string): string[] {
+  const links = new Set<string>()
+  const citation = citationPdfUrlFromHtml(html, baseUrl)
+  if (citation !== undefined) links.add(citation)
+  const origin = new URL(baseUrl).origin
+  for (const match of html.matchAll(/<a\b[^>]*?\s+href\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>(.*?)<\/a\s*>/gis)) {
+    const resolved = htmlUrl(match[1] ?? match[2] ?? match[3] ?? '', baseUrl)
+    if (resolved === undefined) continue
+    const url = new URL(resolved)
+    if (url.origin !== origin) continue
+    const label = match[4] ?? ''
+    if ((/\.pdf$/i.test(url.pathname) && /\b(?:pdf|download|full\s*text)\b|全文|下载/i.test(label)) ||
+        /\/cgi\/viewcontent\.cgi$/i.test(url.pathname) ||
+        /\/bitstreams\/[a-f\d-]{36}\/download\/?$/i.test(url.pathname)) links.add(url.href)
+  }
+  return [...links]
 }
 
 /**

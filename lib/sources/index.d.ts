@@ -31,7 +31,6 @@ export interface SourceRegistryOptions {
     coreApiKey: () => string | undefined;
     /** SerpAPI key for Google Scholar; the source is skipped without it. */
     googleScholarApiKey: () => string | undefined;
-    allowGrayArea: () => boolean;
     grayAreaMirrors: () => string[];
     /** Live per-source minimum request intervals (ms); merged over the defaults. */
     sourceMinIntervals?: (() => Record<string, number>) | undefined;

@@ -42,7 +42,9 @@ export function normalizeCrossrefWork(record: unknown): PaperMeta | undefined {
       if (name.length > 0) authors.push(name)
     }
   }
-  const year = datePartsYear(record.published) ?? datePartsYear(record.issued) ?? datePartsYear(record.created)
+  const printYear = datePartsYear(record['published-print'])
+  const onlineYear = datePartsYear(record['published-online'])
+  const year = printYear ?? datePartsYear(record.issued) ?? datePartsYear(record.published) ?? onlineYear
   const container = Array.isArray(record['container-title']) ? record['container-title'] : []
   const venue = container.find((t): t is string => typeof t === 'string' && t.trim().length > 0)?.trim()
   // Crossref link[] PDFs are usually paywalled; only keep an explicit text-mining PDF.
@@ -68,6 +70,12 @@ export function normalizeCrossrefWork(record: unknown): PaperMeta | undefined {
   }
   if (authors.length > 0) paper.authors = authors
   if (year !== undefined) paper.year = year
+  if (printYear !== undefined) paper.printYear = printYear
+  if (onlineYear !== undefined) paper.onlineYear = onlineYear
+  for (const [field, key] of [['volume', 'volume'], ['issue', 'issue'], ['pages', 'page'], ['articleNumber', 'article-number']] as const) {
+    const value = str(record, key)
+    if (value !== undefined) paper[field] = value
+  }
   if (venue !== undefined) paper.venue = venue
   if (abstractRaw !== undefined && abstractRaw.length > 0) paper.abstract = abstractRaw
   const citations = num(record, 'is-referenced-by-count')
@@ -86,10 +94,18 @@ export function crossrefSource(options: () => FetchOptions): ScholarSource {
     id: 'crossref',
     async search(query: SearchQuery, signal: AbortSignal): Promise<PaperMeta[]> {
       const opts = options()
+      const doi = normalizeDoi(query.query)
+      if (doi !== undefined) {
+        const params = new URLSearchParams()
+        if (opts.email !== undefined && opts.email.length > 0) params.set('mailto', opts.email)
+        const data = await fetchJson(`${CROSSREF_API}/${encodeURIComponent(doi)}?${params.toString()}`, { ...opts, signal })
+        const paper = isRecord(data) ? normalizeCrossrefWork(data.message) : undefined
+        return paper !== undefined && normalizeDoi(paper.doi) === doi ? [paper] : []
+      }
       const params = new URLSearchParams({
         query: query.query,
         rows: String(Math.min(Math.max(1, query.limit ?? 20), 200)),
-        select: 'DOI,title,author,published,issued,created,container-title,abstract,is-referenced-by-count,link',
+        select: 'DOI,title,author,published,published-print,published-online,issued,volume,issue,page,article-number,container-title,abstract,is-referenced-by-count,link',
       })
       if (query.yearFrom !== undefined || query.yearTo !== undefined) {
         const from = query.yearFrom ?? 1600

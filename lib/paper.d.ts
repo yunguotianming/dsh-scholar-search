@@ -5,6 +5,8 @@
  * @module dsh-scholar-search/paper
  */
 import type { PaperMeta } from './types.js';
+/** 把 DOI、arXiv ID 或 PMID 转为来源解析器使用的最小题录。 */
+export declare function paperFromIdentifier(identifier: string): PaperMeta;
 /** Source quality weights (local_paper_hub `SOURCE_QUALITY`). */
 export declare const SOURCE_QUALITY: Record<string, number>;
 /**

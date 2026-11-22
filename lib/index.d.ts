@@ -1,9 +1,10 @@
 /**
  * dsh-scholar-search: free academic literature search + OA full-text download
  * for DeepSeek Harness. Registers scholar_search / scholar_download /
- * scholar_read on `ctx.tools`, a system-prompt guidance section, a settings
- * section (hot-updatable config), and `GET /scholar-search/ping` on the web
- * server for the settings card's connectivity checks.
+ * scholar_read plus the Chinese CNKI/Wanfang/CQVIP search, detail, and
+ * site-download-entry tools on `ctx.tools`, a system-prompt guidance section, a
+ * settings section (hot-updatable config), and `GET /scholar-search/ping` on the
+ * web server for the settings card's connectivity checks.
  * @module dsh-scholar-search
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -22,7 +23,7 @@ export declare const name = "scholar-search";
 /** Services required before `apply` runs; `settings` and `webServer` attach lazily. */
 export declare const inject: string[];
 /** Version string sent in the `User-Agent`; kept in sync with package.json. */
-export declare const VERSION = "0.2.0";
+export declare const VERSION = "0.3.1";
 export { PING_ROUTE, SETTINGS_NAMESPACE } from './shared/constants.js';
 export type { PingResponse } from './shared/constants.js';
 /** Plugin configuration; every field is optional and hot-updatable from the settings UI. */
@@ -37,9 +38,7 @@ export interface Config {
     coreApiKey?: string;
     /** SerpAPI key for Google Scholar (paid, free tier 100/month); the source is skipped without it. */
     googleScholarApiKey?: string;
-    /** Enable gray-area mirrors (Sci-Hub) as the LAST download fallback. Off by default. Legal risk is yours — see README. */
-    allowGrayArea?: boolean;
-    /** Gray-area mirror URL templates with a `{doi}` placeholder; only used when allowGrayArea is true. */
+    /** 灰色渠道镜像 URL 模板（{doi} 占位符），用于最后兜底和直接下载。 */
     grayAreaMirrors?: string[];
     /** Directory PDFs download into (relative to the workspace, or absolute). Defaults to `download/papers` under the workspace. */
     downloadDir?: string;
@@ -84,5 +83,6 @@ export declare const Config: Schema<Config>;
  */
 export declare function apply(ctx: Context, config: Config): void;
 export { CnkiMcpManager } from './chinese/cnki-mcp.js';
-export { ChineseBrowserWorkflow, isDetailUrl, parseSnapshot, providerFromUrl, resolveHref } from './chinese/browser-workflow.js';
-export { applyChineseSearchTools } from './tools/chinese-search.js';
+export { ChineseBrowserWorkflow, DOWNLOAD_REGIONS, chineseSourceFromUrl, cleanAbstract, cleanDoi, firstDate, formatOfDownload, isDetailUrl, parseAuthors, parseDownloadCandidates, parseLabelRows, parseSnapshot, providerFromUrl, resolveHref, splitList, yearFromText, } from './chinese/browser-workflow.js';
+export type { ChineseDownloadResult, ChineseProvider, DownloadCandidate, DownloadFormat, Snapshot, SnapshotItem, } from './chinese/browser-workflow.js';
+export { applyChineseSearchTools, paperFromCnkiRecord } from './tools/chinese-search.js';

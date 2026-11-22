@@ -9,6 +9,8 @@ import type { FetchOptions } from '../http.js';
 import type { ScholarSource } from '../types.js';
 /** Extract the `citation_pdf_url` meta content out of an HTML page. Exported for tests. */
 export declare function citationPdfUrlFromHtml(html: string, baseUrl: string): string | undefined;
+/** 读取公开落地页声明的 PDF，或同站的机构库下载入口。 */
+export declare function pdfLinksFromLandingPage(html: string, baseUrl: string): string[];
 /**
  * Create the crossref_page link-enrichment source.
  * @param options - shared fetch options source.

@@ -29,7 +29,6 @@ export interface ScholarCardState {
     emailConfigured: boolean;
     downloadDir: string;
     enabledSources: string[];
-    allowGrayArea: boolean;
     /** Per-source connectivity, keyed by source id. */
     checks: Record<string, SourceCheck>;
     /** A test-all run is in flight. */
@@ -112,12 +111,10 @@ export declare class ScholarCardController {
     /** Whether the field has a staged draft differing from the resolved value. */
     isDirty(field: string): boolean;
     /**
-     * Persist one field through the scope. Reads the staged draft for text
-     * fields; `explicit` lets a checkbox save its boolean directly.
-     * @param field - config field name.
-     * @param explicit - a value to write instead of the draft (checkboxes).
+     * 将文本字段的编辑草稿保存到配置作用域。
+     * @param field - 配置字段名。
      */
-    saveField(field: string, explicit?: unknown): Promise<void>;
+    saveField(field: string): Promise<void>;
     /** Clear one stored field through the scope (secrets the user wants gone). */
     clearField(field: string): Promise<void>;
     /**

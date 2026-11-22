@@ -46,6 +46,12 @@ export function normalizePubmedSummary(record: unknown, pmid: string): PaperMeta
   const paper: PaperMeta = { title, source: 'pubmed', sourceId: pmid, pmid }
   if (authors.length > 0) paper.authors = authors
   if (yearMatch !== null) paper.year = Number.parseInt(yearMatch[1]!, 10)
+  const onlineMatch = /^(\d{4})/.exec(str(record, 'epubdate') ?? '')
+  if (onlineMatch !== null) paper.onlineYear = Number.parseInt(onlineMatch[1]!, 10)
+  for (const [field, key] of [['volume', 'volume'], ['issue', 'issue'], ['pages', 'pages']] as const) {
+    const value = str(record, key)
+    if (value !== undefined) paper[field] = value
+  }
   const venue = str(record, 'fulljournalname') ?? str(record, 'source')
   if (venue !== undefined) paper.venue = venue
   if (doi !== undefined) paper.doi = doi

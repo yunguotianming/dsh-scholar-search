@@ -4,9 +4,48 @@ import { parseArxivFeed } from '../src/sources/arxiv.js'
 import { normalizeSerpApiResult, googleScholarSource } from '../src/sources/google_scholar.js'
 import { europePmcOfficialPdfUrl, europePmcPmcidWithPdf } from '../src/sources/europepmc.js'
 import { openAlexPdfCandidates } from '../src/sources/openalex.js'
+import { crossrefSource, normalizeCrossrefWork } from '../src/sources/crossref.js'
+import { normalizePubmedSummary } from '../src/sources/pubmed.js'
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('著录元数据回归', () => {
+  it('Crossref 使用卷期年并保留在线年、卷期页码和文章号', () => {
+    const record = normalizeCrossrefWork({
+      DOI: '10.1000/test', title: ['T'], 'published-print': { 'date-parts': [[2022, 3]] },
+      'published-online': { 'date-parts': [[2021, 11]] }, published: { 'date-parts': [[2021]] },
+      volume: '31', issue: '4', page: '3414-3427', 'article-number': '100699',
+    })
+    expect(record).toMatchObject({ year: 2022, printYear: 2022, onlineYear: 2021, volume: '31', issue: '4', pages: '3414-3427', articleNumber: '100699' })
+  })
+
+  it('缺失的卷期页码不补造，created 年不能当出版年', () => {
+    const record = normalizeCrossrefWork({ DOI: '10.1000/test', title: ['T'], created: { 'date-parts': [[2026]] } })!
+    expect(record.year).toBeUndefined()
+    expect(record.volume).toBeUndefined()
+    expect(record.pages).toBeUndefined()
+  })
+
+  it('完整 DOI 查询只访问精确 works 端点，404 不回退到模糊标题结果', async () => {
+    const source = crossrefSource(() => ({ timeoutMs: 5000 }))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ message: { DOI: '10.1000/test', title: ['Matched title'] } }))))
+    expect(await source.search({ query: 'https://doi.org/10.1000/TEST' }, new AbortController().signal)).toMatchObject([{ title: 'Matched title', doi: '10.1000/test' }])
+    expect(vi.mocked(fetch).mock.calls[0]![0]).toContain('/works/10.1000%2Ftest?')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('Not found', { status: 404 })))
+    expect(await source.search({ query: '10.1000/not-found' }, new AbortController().signal)).toEqual([])
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('DOI 回解出现标识不符时不接收该记录', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ message: { DOI: '10.1000/another', title: ['Wrong paper'] } }))))
+    expect(await crossrefSource(() => ({ timeoutMs: 5000 })).search({ query: '10.1000/expected' }, new AbortController().signal)).toEqual([])
+  })
+
+  it('PubMed 保留来源提供的卷期页码与在线年', () => {
+    expect(normalizePubmedSummary({ title: 'T', pubdate: '2021 Jan', epubdate: '2020 Oct', volume: '30', issue: '1-2', pages: '12-20' }, '12345')).toMatchObject({ year: 2021, onlineYear: 2020, volume: '30', issue: '1-2', pages: '12-20' })
+  })
 })
 
 const OPENALEX_WORK = {

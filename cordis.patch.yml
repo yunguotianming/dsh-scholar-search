@@ -9,7 +9,6 @@
 #   - id: scholar-search
 #     config:
 #       email: you@example.org
-#       allowGrayArea: false
 #       downloadDir: papers
 #
 # All sources are free public APIs; no credential is required to start.

@@ -50,7 +50,6 @@ export interface SourceRegistryOptions {
   coreApiKey: () => string | undefined
   /** SerpAPI key for Google Scholar; the source is skipped without it. */
   googleScholarApiKey: () => string | undefined
-  allowGrayArea: () => boolean
   grayAreaMirrors: () => string[]
   /** Live per-source minimum request intervals (ms); merged over the defaults. */
   sourceMinIntervals?: (() => Record<string, number>) | undefined
@@ -107,7 +106,7 @@ export function buildSources(options: SourceRegistryOptions): SourceRegistry {
       unpaywall: wrap(unpaywallSource(options.fetchOptions)),
       openaire: wrap(openaireSource(options.fetchOptions)),
       crossref_page: wrap(crossrefPageSource(options.fetchOptions)),
-      grayarea: wrap(grayareaSource(options.fetchOptions, options.allowGrayArea, options.grayAreaMirrors)),
+      grayarea: wrap(grayareaSource(options.fetchOptions, options.grayAreaMirrors)),
     },
   }
 }

@@ -118,5 +118,13 @@ export function throttleSource(source: ScholarSource, throttle: ThrottleTable): 
             return source.resolvePdf!(paper, signal)
           },
         }),
+    ...(source.resolvePdfLocations === undefined
+      ? {}
+      : {
+          async resolvePdfLocations(paper, signal) {
+            await throttle.wait(source.id, signal)
+            return source.resolvePdfLocations!(paper, signal)
+          },
+        }),
   }
 }

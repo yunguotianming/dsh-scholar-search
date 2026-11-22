@@ -1,12 +1,18 @@
 /**
- * CNKI、万方和维普的中文论文检索工具。
+ * CNKI、万方和维普的中文论文检索、详情读取与站内下载入口工具。
  * @module dsh-scholar-search/tools/chinese-search
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type GenericCallView } from '@deepseek-ai/dsh-tools'
 import type { Runtime } from '../runtime.js'
-import { ChineseBrowserWorkflow, providerFromUrl } from '../chinese/browser-workflow.js'
+import {
+  ChineseBrowserWorkflow,
+  chineseSourceFromUrl,
+  providerFromUrl,
+  type ChineseDownloadResult,
+} from '../chinese/browser-workflow.js'
+import { readCnkiPaper } from '../chinese/cnki-mcp.js'
 import type { PaperMeta } from '../types.js'
 
 const PROVIDERS = ['cnki', 'wanfang', 'cqvip'] as const
@@ -19,10 +25,19 @@ const PAPER_SCHEMA = {
     title: { type: 'string', required: true },
     authors: { type: 'array', items: { type: 'string' } },
     year: { type: 'integer' },
+    volume: { type: 'string' },
+    issue: { type: 'string' },
+    pages: { type: 'string' },
     venue: { type: 'string' },
     abstract: { type: 'string' },
     keywords: { type: 'array', items: { type: 'string' } },
     doi: { type: 'string' },
+    publishDate: { type: 'string' },
+    onlinePublishDate: { type: 'string' },
+    organizations: { type: 'array', items: { type: 'string' } },
+    funds: { type: 'array', items: { type: 'string' } },
+    classifications: { type: 'array', items: { type: 'string' } },
+    siteDownloadUrl: { type: 'string' },
     landingPageUrl: { type: 'string' },
     source: { type: 'string', required: true },
     sourceId: { type: 'string', required: true },
@@ -39,6 +54,22 @@ const SEARCH_SCHEMA = {
     searchedSources: { type: 'array', required: true, items: { type: 'string' } },
     failedSources: { type: 'array', items: { type: 'string' } },
     failureMessages: { type: 'array', items: { type: 'string' } },
+  },
+} as const
+
+const DOWNLOAD_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    provider: { type: 'string', required: true },
+    detailUrl: { type: 'string', required: true },
+    title: { type: 'string' },
+    downloadUrl: { type: 'string' },
+    format: { type: 'string' },
+    opened: { type: 'boolean', required: true },
+    status: { type: 'string', required: true },
+    message: { type: 'string', required: true },
+    candidates: { type: 'array', items: { type: 'string' } },
   },
 } as const
 
@@ -60,6 +91,44 @@ function renderSearch(value: ChineseSearchValue): { type: 'text'; text: string }
   return [{ type: 'text', text: lines.join('\n') }]
 }
 
+/** 把详情元数据渲染成逐字段文本，缺失字段直接省略。 */
+function renderPaper(paper: PaperMeta): { type: 'text'; text: string }[] {
+  const lines = [paper.title]
+  const meta: string[] = []
+  if (paper.authors !== undefined && paper.authors.length > 0) meta.push(`作者：${paper.authors.join('、')}`)
+  if (paper.venue !== undefined) meta.push(`来源：${paper.venue}`)
+  if (paper.year !== undefined) meta.push(`年：${paper.year}`)
+  if (paper.volume !== undefined) meta.push(`卷：${paper.volume}`)
+  if (paper.issue !== undefined) meta.push(`期：${paper.issue}`)
+  if (paper.pages !== undefined) meta.push(`页码：${paper.pages}`)
+  if (paper.doi !== undefined) meta.push(`DOI：${paper.doi}`)
+  if (paper.publishDate !== undefined) meta.push(`发表日期：${paper.publishDate}`)
+  if (paper.onlinePublishDate !== undefined) meta.push(`在线出版日期：${paper.onlinePublishDate}`)
+  if (meta.length > 0) lines.push(meta.join('；'))
+  if (paper.organizations !== undefined && paper.organizations.length > 0) lines.push(`机构：${paper.organizations.join('；')}`)
+  if (paper.funds !== undefined && paper.funds.length > 0) lines.push(`资助基金：${paper.funds.join('；')}`)
+  if (paper.classifications !== undefined && paper.classifications.length > 0) lines.push(`分类号：${paper.classifications.join('；')}`)
+  if (paper.keywords !== undefined && paper.keywords.length > 0) lines.push(`关键词：${paper.keywords.join('、')}`)
+  if (paper.abstract !== undefined) lines.push(`摘要：${paper.abstract}`)
+  lines.push(`详情页：${paper.landingPageUrl ?? paper.sourceId}`)
+  lines.push(paper.siteDownloadUrl === undefined
+    ? '站内下载入口：未在详情页找到；需要时用 chinese_scholar_download 单独解析。'
+    : `站内下载入口：${paper.siteDownloadUrl}`)
+  return [{ type: 'text', text: lines.join('\n') }]
+}
+
+function renderDownload(value: ChineseDownloadResult): { type: 'text'; text: string }[] {
+  const lines = [`中文全文下载入口（${value.provider}）：${value.status}`]
+  if (value.title !== undefined) lines.push(`页面标题：${value.title}`)
+  lines.push(`详情页：${value.detailUrl}`)
+  if (value.downloadUrl !== undefined) lines.push(`下载入口（${value.format ?? '格式未识别'}）：${value.downloadUrl}`)
+  if (value.candidates !== undefined && value.candidates.length > 0) lines.push(`其它候选：${value.candidates.join('；')}`)
+  lines.push(value.message)
+  if (value.format === 'caj') lines.push('CAJ 不是 PDF：需要 CAJViewer 等专用阅读器，不能改扩展名冒充 PDF。')
+  if (value.opened) lines.push('打开入口不等于下载完成；请核对浏览器下载列表中的文件名与保存位置，再用 scholar_read 按本地路径读取。')
+  return [{ type: 'text', text: lines.join('\n') }]
+}
+
 export interface ChineseSearchValue {
   query: string
   total: number
@@ -74,7 +143,21 @@ function selectedProviders(value: unknown): Provider[] {
   return value.filter((item): item is Provider => typeof item === 'string' && (PROVIDERS as readonly string[]).includes(item as Provider))
 }
 
-/** 注册中文三站点检索工具。 */
+export { paperFromCnkiRecord } from '../chinese/cnki-mcp.js'
+
+/** 从 url 或 paper 参数解析出要处理的中文详情页地址。 */
+function resolveDetailUrl(args: { url?: string | undefined; paper?: PaperMeta | undefined }): string {
+  const direct = args.url?.trim()
+  const fromPaper = args.paper?.landingPageUrl?.trim() ?? args.paper?.sourceId?.trim()
+  if (direct !== undefined && direct !== '') {
+    if (fromPaper !== undefined && fromPaper !== '') throw new Error('url 与 paper 只能提供一项')
+    return direct
+  }
+  if (fromPaper === undefined || fromPaper === '') throw new Error('需要提供 url 或 paper')
+  return fromPaper
+}
+
+/** 注册中文检索、详情和下载入口工具。 */
 export function applyChineseSearchTools(ctx: Context, runtime: Runtime): void {
   const workflow = new ChineseBrowserWorkflow(ctx)
   ctx.tools.register(defineTool({
@@ -120,9 +203,9 @@ export function applyChineseSearchTools(ctx: Context, runtime: Runtime): void {
 
   ctx.tools.register(defineTool({
     name: 'chinese_scholar_detail',
-    description: 'Read metadata from a CNKI, Wanfang, or CQVIP paper detail URL. CNKI is delegated to cnki-mcp; Wanfang/CQVIP use dsh-browser.',
+    description: 'Read Chinese paper metadata from a CNKI, Wanfang, or CQVIP detail URL, including DOI, publication dates, organizations, funds, classifications, and the site’s own full-text download entry when the page exposes one. Wanfang/CQVIP use dsh-browser; CNKI is delegated to cnki-mcp.',
     parameters: { url: { type: 'string', required: true, description: 'Supported CNKI, Wanfang, or CQVIP detail URL.' } },
-    output: { schema: PAPER_SCHEMA, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }] },
+    output: { schema: PAPER_SCHEMA, render: (_args, value) => renderPaper(value as PaperMeta) },
     timeoutMs: runtime.toolTimeoutMs,
     presentCall: args => present(`读取中文论文：${(args as { url: string }).url}`),
     async execute(args, exec) {
@@ -130,19 +213,29 @@ export function applyChineseSearchTools(ctx: Context, runtime: Runtime): void {
       const url = args.url.trim()
       const provider = providerFromUrl(url)
       if (provider !== undefined) return workflow.detail(provider, url, exec)
-      if (!/^https:\/\/kns\.cnki\.net\/kcms2\/article\/abstract/i.test(url)) throw new Error('unsupported Chinese paper detail URL')
       if (runtime.cnkiMcp === undefined) throw new Error('cnki-mcp is not configured')
-      const raw = await runtime.cnkiMcp.detail(url, exec.signal)
-      const title = typeof raw.title === 'string' ? raw.title : url
-      const paper: PaperMeta = { title, source: 'cnki_mcp', sourceId: url, landingPageUrl: url }
-      if (Array.isArray(raw.authors)) paper.authors = raw.authors.filter((item): item is string => typeof item === 'string')
-      if (typeof raw.journal === 'string') paper.venue = raw.journal
-      if (typeof raw.abstract === 'string') paper.abstract = raw.abstract
-      if (Array.isArray(raw.keywords)) paper.keywords = raw.keywords.filter((item): item is string => typeof item === 'string')
-      if (typeof raw.doi === 'string') paper.doi = raw.doi
-      const year = typeof raw.year === 'number' ? raw.year : undefined
-      if (year !== undefined) paper.year = year
-      return paper
+      return readCnkiPaper(runtime.cnkiMcp, url, exec.signal)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'chinese_scholar_download',
+    description: 'Resolve a Chinese paper’s own full-text download entry from a CNKI, Wanfang, or CQVIP detail page. By default it only resolves and reports (title, entry URL, format); pass open=true to open the entry in the connected dsh-browser tab. PDF entries rank first; when only a CAJ entry exists it returns caj-only and never presents CAJ as PDF. It only hands the site’s own entry to the user’s browser: no login, subscription, captcha, or access-control bypass, no file fetched by the plugin, and an opened entry is not a completed download.',
+    parameters: {
+      url: { type: 'string', description: 'CNKI, Wanfang, or CQVIP detail URL.' },
+      paper: { ...PAPER_SCHEMA, description: 'A paper object returned by chinese_scholar_search/detail; its landing page or source id is used.' },
+      open: { type: 'boolean', description: 'Open the resolved entry in the connected browser tab. Defaults to false: resolve and report first, open only after the user confirms.' },
+    },
+    output: { schema: DOWNLOAD_SCHEMA, render: (_args, value) => renderDownload(value as ChineseDownloadResult) },
+    timeoutMs: runtime.toolTimeoutMs,
+    isConcurrencySafe: () => false,
+    presentCall: args => present(`中文全文下载入口：${(args as { url?: string; paper?: PaperMeta }).url ?? (args as { paper?: PaperMeta }).paper?.title ?? ''}`),
+    async execute(args, exec) {
+      if (!runtime.chineseSearchEnabled()) throw new Error('Chinese paper search is disabled')
+      const detailUrl = resolveDetailUrl(args)
+      const provider = chineseSourceFromUrl(detailUrl)
+      if (provider === undefined) throw new Error('unsupported Chinese paper detail URL')
+      return workflow.download(provider, detailUrl, exec, { open: args.open === true })
     },
   }))
 }

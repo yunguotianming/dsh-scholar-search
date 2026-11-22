@@ -17,8 +17,8 @@ export interface ScholarSearchCardFace {
     testSource(source: string): void;
     /** Stage one field's edit text. */
     editField(field: string, text: string): void;
-    /** Persist one field (draft text, or an explicit value for checkboxes). */
-    saveField(field: string, explicit?: unknown): void;
+    /** 保存文本字段的编辑草稿。 */
+    saveField(field: string): void;
     /** Clear one stored field. */
     clearField(field: string): void;
 }

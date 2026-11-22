@@ -2,15 +2,17 @@
 
 [中文](README_CN.md)
 
+Current version: **0.3.1**. Extends 0.2.1 (destination write checks, Unicode filenames, lazy download fallbacks, DOI metadata verification, deduplication fixes, computed batch counts) with fuller Chinese record fields and a Chinese full-text download-entry tool (PDF/CAJ format split, resolve-then-open), and syncs the bundled `cnki-mcp` to upstream 0.2.0.
+
 Free academic literature search + open-access full-text download for [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness). No paid API, no credits — all retrieval goes through free public scholarly APIs, and downloads follow an "OA first, multi-source fallback" chain.
 
 ## Features
 
 - **`scholar_search`** — one query fans out to up to 10 sources (OpenAlex, Semantic Scholar, PubMed, Europe PMC, arXiv, bioRxiv/medRxiv, Crossref, DOAJ, CORE, Google Scholar), then dedupes (DOI → arXiv → PMID → canonical URL → normalized title), merges, and quality-ranks the results. Every hit carries an `openAccessPdfUrl` when one is known.
-- **`scholar_download`** — resolves a free full-text PDF through a 10-level fallback chain (OpenAlex locations → Unpaywall → Semantic Scholar → Europe PMC → arXiv/bioRxiv direct links → OpenAIRE → CORE → publisher landing-page meta → OA publisher URL patterns → optional gray area) and saves it to `downloadDir`.
-- **`scholar_scihub_download`** — direct Sci-Hub download, bypassing the OA chain entirely. Concurrently probes all configured mirrors and returns the first available PDF. Requires `allowGrayArea` to be enabled. Use only when you understand the legal risk in your jurisdiction.
+- **`scholar_download`** — tries Europe PMC first, follows alternate open-access locations, and checks the PDF's identity before saving. Supports per-call directories, Unicode filenames, deduplicated batches, and links for manual retrieval.
+- **`scholar_scihub_download`** — direct Sci-Hub download, bypassing the OA chain entirely. Concurrently probes all configured mirrors and returns the first available PDF. Available by default. Use only when you understand the legal risk in your jurisdiction.
 - **`scholar_read`** — downloads (when needed) and extracts PDF text with `pdf-parse`, returned in slices.
-- **`chinese_scholar_search` / `chinese_scholar_detail`** — search CNKI, Wanfang, and CQVIP. CNKI uses a local `cnki-mcp` service (optionally started on demand); Wanfang and CQVIP use the connected `dsh-browser`.
+- **`chinese_scholar_search` / `chinese_scholar_detail` / `chinese_scholar_download`** — search CNKI, Wanfang, and CQVIP; read DOI, publication dates, organizations, funds, and classifications; and hand the site's own full-text download entry to the user's browser. CNKI uses a local `cnki-mcp` service (optionally started on demand); Wanfang and CQVIP use the connected `dsh-browser`.
 - A Web settings card (Settings → Plugins) with a config summary and per-source connectivity checks (including per-mirror Sci-Hub reachability).
 
 ## Install
@@ -100,6 +102,14 @@ After removal:
 
 Downloaded PDFs (in `downloadDir`, default `<workspace>/download/papers/`) are **not** deleted.
 
+## MCP
+
+Connect an MCP client over local stdio to search academic indexes, look up an exact DOI, and locate open-access full-text candidates. From a source checkout, install dependencies and run `pnpm run build:lib`. Set the client command to `node` and pass the absolute path to `lib/mcp/stdio.js` as its argument. The package also declares a `dsh-scholar-mcp` executable.
+
+The tools are `scholar_search` (`query`, optional `sources`, `limit`, `yearFrom`, `yearTo`), `scholar_lookup_doi` (`doi`), and `scholar_locate_open_access` (`identifier`, a DOI, arXiv ID, or PMID). CNKI search is available through `chinese_scholar_search` (`query`, optional `limit`) and `chinese_scholar_detail` (`url` from a search result). They use the bundled `cnki-mcp` service and its initialized browser profile. Set `SCHOLAR_EMAIL` in the client environment to enable Unpaywall. See the [Windows configuration example and source credentials](README_CN.md#mcp-接入) and the [CNKI setup](README_CN.md#初始化知网).
+
+Use `chinese_scholar_download` with a CNKI, Wanfang, or CQVIP article detail `url` and an absolute `downloadDir` on the MCP host. The first call returns the proposed destination and a single-use `confirmationId`. Show the article and directory to the user, wait for explicit approval, then call again with the same arguments and the ID. The tool saves the PDF or CAJ through a dedicated Chrome or Edge profile and returns the file path. See [Chinese full-text downloads](README_CN.md#下载中文全文文件).
+
 ## Usage
 
 ### `scholar_search` — search the literature
@@ -124,7 +134,11 @@ The model calls:
 }
 ```
 
-Returns: a relevance-ranked list of papers, each with `title`, `authors`, `year`, `venue`, `doi`, `openAccessPdfUrl` (when known), `oaSources` (which sources surfaced it), etc.
+Returns: a relevance-ranked list of papers, each with `title`, `authors`, `year`, `venue`, `doi`, `openAccessPdfUrl` (when known), `oaSources` (which sources surfaced it), etc. Abstracts are displayed without the previous 400-character cut; upstream completeness still needs checking.
+
+Select sources for the research question; hyphenated aliases such as `semantic-scholar` are accepted. Unknown or entirely disabled sources produce an explicit error. Split long queries when recall is low. For Chinese research contexts, supplement international indexes with CNKI/Wanfang using the Chinese tools.
+
+Use `query=DOI, sources=["crossref"]` for an exact DOI lookup. Available metadata includes `printYear`, `onlineYear`, `volume`, `issue`, `pages`, and `articleNumber`; `year` prefers the print year and missing fields stay absent. Matching DOI records merge across platform IDs; matching titles with conflicting identifiers remain separate.
 
 ### `chinese_scholar_search` — Chinese literature
 
@@ -132,11 +146,37 @@ Use `query`, an optional `sources` subset (`cnki`, `wanfang`, `cqvip`), and `lim
 
 Before the first CNKI call, run `uv run cnki-mcp init` once in the `cnki-mcp` checkout to initialize a profile. The plugin never automates login or bypasses verification.
 
+### `chinese_scholar_detail` — Chinese record details
+
+Takes `url` only. Wanfang and CQVIP are read through `dsh-browser`; CNKI is delegated to `cnki-mcp`. Returns `title`, `authors`, `venue`, `year`, `volume`, `issue`, `pages`, `doi`, `keywords`, `abstract`, `publishDate`, `onlinePublishDate`, `organizations`, `funds`, `classifications`, and the page's `siteDownloadUrl`. Missing fields stay absent and are never inferred.
+
+`siteDownloadUrl` is only the site's own download entry. It does not mean the current account is entitled, and it does not mean the plugin holds the full text.
+
+### `chinese_scholar_download` — Chinese full-text download entry
+
+Parameters:
+- `url` or `paper`: exactly one. `url` is a CNKI, Wanfang, or CQVIP detail page; `paper` is a record from `chinese_scholar_search`/`chinese_scholar_detail`, whose detail page is used.
+- `open` (optional, default `false`): resolve and report only (title, entry URL, format). Pass `open=true` after the user confirms, and the tool opens the entry in the connected `dsh-browser` tab.
+
+Behaviour and boundaries:
+- The tool reads only the download entry the site itself publishes on the detail page and hands it to the user's logged-in browser. The browser saves the file to its own download directory; the plugin process never fetches, writes, or reads the file.
+- **PDF first, CAJ stated separately**: candidates rank PDF ahead of CAJ. When the page offers only CAJ, `format` is `caj` and `status` is `caj-only`; `message` says CAJ needs a dedicated reader such as CAJViewer, is not a PDF, and must not be renamed to one. Reader pages (HTML reading, original-version reading) are not download entries and are excluded.
+- **An opened entry is not a completed download**: `opened` only means the entry was opened in the browser. Check the browser's download list for the filename and save location; never guess the download directory or overwrite an existing file.
+- No automated login, no captcha solving, no subscription or access-control bypass. When the page needs any of these, the tool reports the status instead of attempting a workaround.
+- `status` is one of `opened` (opened in a new tab), `link-resolved` (resolved, not opened), `caj-only` (only a CAJ entry exists), `no-download-link` (no entry on the page; `message` names the missing step), or `captcha` (complete verification in the browser and retry). The result also carries `downloadUrl`, `format`, and any further `candidates`.
+- CQVIP's extraction spec does not provide a download-entry field, so the plugin does not treat CQVIP as resolvable and normally returns `no-download-link`. Wanfang entries depend on institutional subscription and button rendering; CNKI entries normally require an institutional login in that same browser.
+
+Confirmation flow: call once to get the title, format, and entry; report them to the user; call again with `open=true` after approval. For multiple papers, list the range once and ask together instead of interrupting per paper.
+
+After the browser saves the file, read it with `scholar_read` by local path. A download only proves a file was saved; a verified reading still requires comparing the text.
+
 ### `scholar_download` — download a PDF
 
 Parameters:
-- `identifier` (required): DOI / arXiv ID / PMID / paper title (matched against recent search results)
-- `filename` (optional): custom filename
+- Exactly one of `identifier` (DOI / arXiv ID / PMID), `paper` (one search result), or `papers` (1–50 records, deduplicated before sequential downloads).
+- `filename` (optional): single-paper filename; Unicode letters are preserved and unsafe path characters are cleaned. Existing files return `file-exists` and are not overwritten.
+- `downloadDir` (optional): per-call absolute directory or path relative to the session workspace. Omitting it keeps the configured default (`download/papers`).
+- `verifyMetadata` (optional, default `false`): resolve the DOI through Crossref and compare the expected `paper.title`, allowing punctuation differences and added subtitles. A mismatch or unavailable verification stops that paper with `metadata-mismatch` or `metadata-unverified`. A bare DOI can verify a registry record but cannot establish the intended article. Recommended for old bibliographies and citation checks.
 
 Example:
 ```
@@ -144,14 +184,17 @@ Download the paper with DOI 10.48550/arxiv.1706.03762
 ```
 
 Returns:
-- on success: `{ path, source, url, sizeBytes }` (saved path, the source that yielded it, final URL, file size)
-- on failure: `{ error: 'no-free-fulltext', triedSources: [...] }` (no OA channel has a free full text)
+- Success returns `{ path, source, url, sizeBytes, attempts, pdfVerification, metadata? }`. `matched` indicates that the PDF's identity matched the DOI or title. `unverified` marks saved files that need manual review. Crossref metadata is included when explicitly verified.
+- Failure returns `{ error, triedSources, failureKind?, attempts?, manualLinks?, message? }`. `content-mismatch` reports a conflicting PDF when no later candidate was saved. When a download returns `no-free-fulltext`, consult the attempt details for the source, URL, and any HTTP status. `manualLinks` gives readers article pages and candidate links for manual retrieval.
+- Batch returns `{ results: [{ paper, download }], summary: { requested, unique, downloaded, failed, skipped } }`. The text summary lists saved paths and papers needing manual retrieval, with the reason and up to two links per paper. Time budgets or directory failures preserve completed results and mark remaining items `not-attempted`. The interrupted item may report `timeout`.
+
+OpenAlex and Unpaywall candidates are tried in order. Landing-page discovery supports `citation_pdf_url`, bepress download routes, DSpace 7 downloads, and same-site PDF links labeled as downloads or full text. The destination is write-probed before network requests. Use `scholar_read` to read the full paper after the identity check.
 
 ### `scholar_scihub_download` — direct Sci-Hub download
 
 Downloads a paper directly through Sci-Hub mirrors, bypassing the OA fallback chain entirely. Concurrently probes all configured mirrors and returns the first available PDF.
 
-**Requires `allowGrayArea` to be enabled** in Settings → Plugins → Scholar Search.
+Available by default; no gray-area toggle is required. `scholar_download` also uses these mirrors as its final fallback after OA sources.
 
 Parameters:
 - `doi` (required): the paper's DOI (e.g. `"10.1038/nature12373"`)
@@ -165,7 +208,6 @@ Download DOI 10.1038/nature12373 via Sci-Hub
 Returns:
 - on success: `{ path, url, sizeBytes, mirror }` (saved path, final URL, file size, which mirror provided it)
 - on failure: `{ error: 'scihub-not-found', probes: [...] }` (no mirror has it; `probes` lists each mirror's status)
-- when disabled: `{ error: 'scihub-disabled' }`
 
 > **Legal warning**: Sci-Hub distributes copyrighted literature without publisher authorization. Downloading through it **may be illegal in your jurisdiction** and may violate institutional policies. This tool is provided for users who understand and accept that risk.
 
@@ -190,7 +232,7 @@ You: Help me survey recent progress on "retrieval augmented generation"
 Model: [calls scholar_search] finds 20 papers, ranked by relevance and OA availability
 
 You: Download the first 3
-Model: [calls scholar_download × 3] saves them to papers/
+Model: [calls scholar_download with papers and downloadDir] returns per-paper results and computed counts
 
 You: Summarize the core method of the first one
 Model: [calls scholar_read] extracts the text and summarizes
@@ -207,11 +249,10 @@ Every field is optional and hot-updatable from the Web settings page (Settings �
 | `pubmedApiKey` | — | Optional NCBI E-utilities key (3 req/s without, 10 req/s with). |
 | `coreApiKey` | — | Optional CORE key (free registration); the CORE source is skipped without it. |
 | `googleScholarApiKey` | — | Optional Google Scholar (SerpAPI) key (paid, free tier 100/month); the Google Scholar source is skipped without it. |
-| `allowGrayArea` | `false` | Enable gray-area mirrors (Sci-Hub) as the LAST download fallback in `scholar_download`, and unlock `scholar_scihub_download`. See the legal warning below. |
 | `downloadDir` | `download/papers` | Directory PDFs download into (relative to the workspace, or absolute). |
 | `enabledSources` | all | Subset of search sources participating in `scholar_search`. |
 | `sourceTimeoutMs` | `15000` | Per-source request timeout (ms). |
-| `grayAreaMirrors` | 8 built-in mirrors | Gray-area mirror URL templates (`{doi}` placeholder); only used when `allowGrayArea` is true. |
+| `grayAreaMirrors` | 8 built-in mirrors | Gray-area mirror URL templates (`{doi}` placeholder), used for the final download fallback and direct Sci-Hub downloads. |
 | `chineseSearchEnabled` | `true` | Enable the Chinese paper tools. |
 | `cnkiMcpAutoStart` | `true` | Start local `cnki-mcp` on the first CNKI call; when false, only an existing service is used. |
 | `cnkiMcpEndpoint` | `http://127.0.0.1:7788/mcp` | `cnki-mcp` Streamable HTTP endpoint. |
@@ -271,15 +312,15 @@ Plugin-internal limits:
 
 ## Source compliance
 
-Every retrieval source is a free public API used within its published terms: OpenAlex (CC0 data), Semantic Scholar Graph API, NCBI E-utilities, Europe PMC, arXiv API, bioRxiv/medRxiv API, Crossref REST (with `mailto`), DOAJ API, CORE API, Unpaywall (requires email), OpenAIRE. PDF downloads only fetch OA links the sources themselves publish; the chain never bypasses a paywall, and 401/403/429/timeout always degrades to "skip this source" rather than erroring.
+Search and OA link retrieval use public scholarly APIs: OpenAlex (CC0 data), Semantic Scholar Graph API, NCBI E-utilities, Europe PMC, arXiv API, bioRxiv/medRxiv API, Crossref REST (with `mailto`), DOAJ API, CORE API, Unpaywall (requires email), OpenAIRE. Downloads try OA links first, then use Sci-Hub mirrors as the final fallback. Failed sources are skipped so the chain can continue.
 
-### Legal warning: `allowGrayArea`
+### Gray-area channels and legal risk
 
-Setting `allowGrayArea` to `true` does two things:
-1. Appends Sci-Hub mirrors to the end of the `scholar_download` fallback chain (level 10, after all OA channels fail).
-2. Unlocks the `scholar_scihub_download` tool for direct Sci-Hub queries.
+Gray-area channels are available by default:
+1. `scholar_download` tries Sci-Hub mirrors after all OA channels fail.
+2. `scholar_scihub_download` queries Sci-Hub directly.
 
-Downloading copyrighted literature through such mirrors **may be illegal in your jurisdiction** and may violate your institution's policies and publisher terms. The option is off by default; enabling it means you bear all risk.
+The `allowGrayArea` setting has been removed; legacy values no longer control downloads. Mirror availability depends on the network and the paper. Downloading copyrighted literature through such mirrors **may be illegal in your jurisdiction** and may violate your institution's policies and publisher terms.
 
 ### Browser download: `browserDownload`
 
@@ -287,10 +328,10 @@ Setting `browserDownload` to `true` retries publisher downloads that were blocke
 
 - Uses **Playwright + the system-installed Chrome/Edge** (no extra browser download), running headless;
 - set `browserExecutablePath` to a specific browser binary, or leave it to auto-probe the chrome/msedge channels;
-- the browser is only used to download **PDF links already confirmed as OA** by the fallback chain — it does not bypass paywalls. It solves "the publisher's bot protection blocked a programmatic download", not "access subscription content";
+- the browser retries PDF candidate links resolved by the fallback chain, which tries OA sources before gray-area mirrors; login and verification remain manual;
 - the browser launches on first use (~1–2s), is reused afterwards, and closes automatically on plugin unload.
 
-**Compliance**: browser download still only touches the legal OA links the chain already confirmed; the only difference from a direct `fetch` is that a real browser renders the page to pass anti-bot checks. The principle of "only download legitimately open-access content" is unchanged.
+Browser retries follow the same source order and PDF validation as direct downloads. The `browserDownload` setting controls browser retries; gray-area channels are available by default.
 
 ## Development
 
@@ -346,13 +387,25 @@ If dsh is below the peer floor, upgrade dsh; if it's above the ceiling (dsh is p
 
 - Check connectivity: click "test all sources" in the settings card to see which sources are unreachable.
 - Some sources (e.g. CORE) need an API key and are skipped without one.
-- Chinese queries perform poorly; ask the model to translate to English first.
+- Use `chinese_scholar_search` for CNKI/Wanfang; English core concepts can supplement international-index searches.
+
+### Chinese download entry returns `no-download-link`, `caj-only`, or `captcha`
+
+`no-download-link` means no site-published download entry was read on the detail page; it is not a network failure. Check per site:
+
+- CNKI: confirm the controlled browser is logged in with an institutional account. A `cnki-mcp` profile is not shared with `dsh-browser`.
+- Wanfang: confirm the institutional subscription is active and the download button rendered; without entitlement the button does not appear.
+- CQVIP: the extraction spec has no download field, so this is the expected result; confirm manually on the page.
+
+`caj-only` means the page offers only a CAJ entry. CAJ needs a dedicated reader such as CAJViewer and is not a PDF; check the page for a separate PDF entry rather than renaming CAJ to PDF.
+
+`captcha` means the current tab shows a verification page. Complete it in the browser and retry; the plugin never solves it.
 
 ### Download fails with `no-free-fulltext`
 
-No OA channel has a free full text for this paper. You can:
+No PDF was obtained in this attempt. Inspect `failureKind` and `attempts` for HTTP errors, challenge pages, DNS failures, or timeouts. A 403 alone does not establish missing institutional access, and browser retries do not guarantee Cloudflare access. You can:
 - Configure `email` (unlocks Unpaywall, improving coverage),
-- Enable `allowGrayArea` (at your own legal risk) and retry, or use `scholar_scihub_download` to query Sci-Hub directly,
+- Inspect gray-area mirror diagnostics, or use `scholar_scihub_download` to query Sci-Hub directly,
 - Download manually from the publisher into `downloadDir`, then use `scholar_read`.
 
 ### `scholar_scihub_download` fails with `scihub-not-found`

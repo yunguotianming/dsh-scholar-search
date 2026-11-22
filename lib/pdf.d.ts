@@ -3,6 +3,7 @@
  * `getText()`), with slicing for model-facing reads.
  * @module dsh-scholar-search/pdf
  */
+import type { PaperMeta } from './types.js';
 /** Extracted text with the page count. */
 export interface PdfText {
     text: string;
@@ -14,6 +15,9 @@ export interface PdfText {
  * @returns the concatenated page text and page count.
  */
 export declare function extractPdfText(data: Uint8Array): Promise<PdfText>;
+export type PdfVerification = 'matched' | 'unverified' | 'content-mismatch';
+/** 用首页的题名和 DOI 核对文件身份。缺少能判定身份的证据时留给人工核验。 */
+export declare function verifyPdfContent(data: Uint8Array, paper: PaperMeta): Promise<PdfVerification>;
 /**
  * Extract text from a PDF file on disk.
  * @param path - absolute file path.

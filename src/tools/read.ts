@@ -12,7 +12,7 @@ import { downloadPaper } from '../download.js'
 import { extractPdfFile, sliceText } from '../pdf.js'
 import type { Runtime } from '../runtime.js'
 import { PAPER_META_SCHEMA } from './search.js'
-import { paperFromIdentifier } from './download.js'
+import { paperFromIdentifier, renderDownload } from './download.js'
 import type { PaperMeta } from '../types.js'
 
 /** Output schema of `scholar_read`. */
@@ -62,6 +62,7 @@ export function applyReadTool(ctx: Context, runtime: Runtime): void {
       identifier: { type: 'string', description: 'DOI, arXiv id, or PMID to download then read.' },
       paper: { ...PAPER_META_SCHEMA, description: 'A paper object as returned by scholar_search; downloaded then read.' },
       maxChars: { type: 'integer', description: `Characters to return (default ${runtime.readMaxChars}).` },
+      downloadDir: { type: 'string', description: '需先下载时使用的本次目标目录，相对会话工作区或绝对路径。' },
     },
     output: {
       schema: READ_OUTPUT_SCHEMA,
@@ -84,12 +85,12 @@ export function applyReadTool(ctx: Context, runtime: Runtime): void {
             : (() => { throw new Error('provide path, identifier, or paper') })()
         const downloaded = await downloadPaper(paper, {
           registry: runtime.registry,
-          downloadDir: runtime.resolveDownloadDir(exec),
+          downloadDir: runtime.resolveDownloadDir(exec, args.downloadDir),
           fetchOptions: runtime.fetchOptions,
           pdfTimeoutMs: runtime.pdfTimeoutMs,
           browser: runtime.browser,
         }, exec.signal)
-        if ('error' in downloaded) throw new Error(`no free full text available (tried: ${downloaded.triedSources.join(' → ') || 'none'})`)
+        if ('error' in downloaded) throw new Error(renderDownload(downloaded)[0]!.text)
         path = downloaded.path
       }
       const { text, pages } = await extractPdfFile(path)

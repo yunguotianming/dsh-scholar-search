@@ -92,7 +92,7 @@ export function apply(ctx: ClientContext): void {
     testAll: () => { void controller.testAll() },
     testSource: (source) => { void controller.testSource(source) },
     editField: (field, text) => { controller.editField(field, text) },
-    saveField: (field, explicit) => { void controller.saveField(field, explicit) },
+    saveField: (field) => { void controller.saveField(field) },
     clearField: (field) => { void controller.clearField(field) },
   })
 

@@ -33,7 +33,7 @@ export interface Runtime {
    * falling back to the plugin launch cwd when the call has no agent (webhook,
    * scheduled task). Never resolves against the harness install directory.
    */
-  resolveDownloadDir: (exec: WorkspaceRef) => string
+  resolveDownloadDir: (exec: WorkspaceRef, override?: string) => string
   /** Per-download PDF timeout in milliseconds. */
   pdfTimeoutMs: number
   /** Cooperative tool-call budget in milliseconds. */

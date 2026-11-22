@@ -1,10 +1,33 @@
-# cnki-mcp
-An MCP server for reach CNKI.
+# CNKI-MCP: An MCP server, CLI and Skills for reach CNKI.
 
-> 免责声明：该项目仅为个人学习项目，且仅供学习参考。
-> 该项目不隶属任何公司、机构，与中国知网（下简称为知网或CNKI）无任何所属关系。
-> 该项目不应用于非法手段，包括但不限于：批量访问知网进行搜索，以非正规途径获取知网论文，利用该项目进行违法违规的行为。
+[![PyPI version](https://img.shields.io/pypi/v/cnki-mcp.svg)](https://pypi.org/project/cnki-mcp/)
+[![PyPI Downloads](https://static.pepy.tech/badge/cnki-mcp)](https://pepy.tech/projects/cnki-mcp)
+[![License](https://img.shields.io/github/license/sepinetam/cnki-mcp)](LICENSE)
+
+> IMPORTANT：因该项目为个人学习项目且仅供学习与参考，故此不接受**任何形式的 AI 提交的问题，代码和评论**，仅接受人工编写的代码或真实的学习使用过程中发现的问题。同时，因个人能力与精力有限，没有很多的时间去审查代码，所以针对且仅针对于本人的该项目**禁止任何形式地通过 AI 扫描代码库来生成 Issue 与 PR**。
+> （没有说 AI 写的代码不好，他写的比我好多了，但考虑多方因素这个 repo 就是禁止使用 AI 扫库发现问题或提交代码，感谢理解。）
+> 
+> 免责声明：该项目仅为个人学习项目，且仅供学习参考。 
+> 该项目不隶属任何公司、机构，与中国知网（下简称为知网或CNKI）无任何所属关系。 
+> 该项目不应用于非法手段，包括但不限于：批量访问知网进行搜索，以非正规途径获取知网论文，利用该项目进行违法违规的行为。 
 > 如有上述行为，本项目不构成任何因果利害关系，由使用者自行负责。最终解释权归本项目所有。
+> 
+> 商标及非关联声明：项目所提及的“中国知网”“知网”“CNKI”等名称、商标及相关标识，其相关权利均归各自合法权利人所有。
+> 本项目仅在客观说明所涉及的平台、适用对象或技术功能所必需的范围内引用相关名称，不将其作为本项目自身的品牌或来源标识，亦不表示或暗示本项目获得相关权利人的授权、认可、赞助或支持。
+> 本项目为独立的非官方项目，与中国知网及其运营主体不存在隶属、代理或官方合作关系。
+> 本项目的发布、分发及使用，不构成对上述第三方商标或标识的任何使用授权。
+> 如相关权利人认为本项目存在侵犯其合法权益的情形，可向项目提交 Issue 并通过邮箱联系维护者，维护者将及时核实并依法处理。
+
+## 快速开始
+本项目提供了配套的 Skill，且同时支持 MCP，CLI，Python API 等多种使用方式，以便为研究者的 Agent 助理快速稳定地使用中国知网搜索论文查找论文。
+
+如果你是人类研究者，将下面这句话发送给你的 Agent 即可：
+```plain text
+帮我从 GitHub 上安装 SepineTam/cnki-mcp 这个项目的 skill，subagents 等，并通过命令行的形式初始化这个项目。
+成功初始化后，去查看《世界经济》这本期刊的 ISSN 号，并告诉我这个期刊在 2025 年是否发表过任何和人才引进相关的文章。
+```
+
+如果你是 Agent，参考 [CNKI-MCP 的 Agent 安装文档](./docs/install.md)
 
 ## 首次初始化
 
@@ -71,4 +94,5 @@ with CnkiClient(profile="profile1") as client:
 
 ## 文档
 
+- [Agent 安装指南](./docs/install.md)
 - [Python API 与专业检索式](docs/api.md)

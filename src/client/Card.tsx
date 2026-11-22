@@ -24,8 +24,8 @@ export interface ScholarSearchCardFace {
   testSource(source: string): void
   /** Stage one field's edit text. */
   editField(field: string, text: string): void
-  /** Persist one field (draft text, or an explicit value for checkboxes). */
-  saveField(field: string, explicit?: unknown): void
+  /** 保存文本字段的编辑草稿。 */
+  saveField(field: string): void
   /** Clear one stored field. */
   clearField(field: string): void
 }
@@ -162,8 +162,8 @@ export function ScholarSearchCard(props: ScholarSearchCardProps) {
   const state = props.useCard((snapshot) => snapshot)
   const [open, setOpen] = useState(false)
 
-  const badge = state.allowGrayArea ? t('grayAreaOn') : state.emailConfigured ? t('emailSet') : t('emailUnset')
-  const badgeClass = state.allowGrayArea ? cls.badgeWarn : state.emailConfigured ? cls.badgeOn : ''
+  const badge = state.emailConfigured ? t('emailSet') : t('emailUnset')
+  const badgeClass = state.emailConfigured ? cls.badgeOn : ''
   const enabledSet = new Set(state.enabledSources)
 
   return (
@@ -192,18 +192,6 @@ export function ScholarSearchCard(props: ScholarSearchCardProps) {
                   {TEXT_FIELDS.map((spec) => (
                     <FieldRow key={spec.field} card={props} field={spec.field} labelKey={spec.labelKey} secret={spec.secret} />
                   ))}
-                  <div className={cls.field}>
-                    <label className={cls.fieldRow} htmlFor="schsr-allowGrayArea">
-                      <input
-                        id="schsr-allowGrayArea"
-                        className={cls.checkbox}
-                        type="checkbox"
-                        checked={state.allowGrayArea}
-                        onChange={(event) => { props.saveField('allowGrayArea', event.target.checked) }}
-                      />
-                      <span className={cls.fieldLabel}>{t('fieldAllowGrayArea')}</span>
-                    </label>
-                  </div>
                 </div>
               )
               : null}
@@ -218,7 +206,7 @@ export function ScholarSearchCard(props: ScholarSearchCardProps) {
                 <span className={cls.kvValue}>{state.enabledSources.length > 0 ? state.enabledSources.join(', ') : '—'}</span>
               </div>
               <div className={cls.kv}>
-                <span className={cls.kvKey}>{t(state.allowGrayArea ? 'grayAreaOn' : 'grayAreaOff')}</span>
+                <span className={cls.kvKey}>{t('grayAreaOn')}</span>
                 <span className={cls.kvValue}>{t(state.emailConfigured ? 'emailSet' : 'emailUnset')}</span>
               </div>
             </div>

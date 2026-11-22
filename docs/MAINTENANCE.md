@@ -1,9 +1,38 @@
 # dsh-scholar-search 维护文档
 
 > 免费学术文献搜索 + OA 全文下载插件（DeepSeek Harness / Cordis 插件）
-> 版本 0.2.0 · 本文档面向后期维护者，记录设计决策、架构、实现细节和踩过的坑
+> 版本 0.3.1 · 本文档面向后期维护者，记录设计决策、架构、实现细节和踩过的坑
 
 ---
+
+## 灰色渠道默认可用（2026-11-05）
+
+- 设置卡片与配置 Schema 已移除灰色渠道启用开关，卡片固定显示“灰色渠道默认可用”。旧配置中的 `allowGrayArea` 值不再参与下载判断。
+- `scholar_download` 保持 OA 优先、灰色渠道最后兜底的顺序；`scholar_scihub_download` 可直接调用。`grayAreaMirrors` 继续支持镜像列表配置。
+- 回归用例位于 `tests/scihub.spec.ts` 的“灰色渠道默认可用”分组，覆盖默认兜底、旧值为 false 时的直接下载、OA 命中后停止回退，以及设置卡片文本字段保存。
+
+## 检索与下载复盘后的维护要点
+
+- `src/download.ts` 的异步回退生成器负责按需解析。OpenAlex 和 Unpaywall 返回去重后的 PDF 直链及开放落地页；落地页提取的 PDF 链接只试一层。`buildFallbackChain` 返回候选及落地页，供调用方完整探测。
+- 下载前以随机独占文件试写目标目录并清理；最终文件独占写入，避免覆盖。失败结果区分目录错误、文件已存在、无候选、候选失败及来源异常，`attempts` 保留具体来源、URL 和原因。
+- `src/tools/download.ts` 保留批量结构化逐篇结果。文本汇总给出已保存路径和待补齐文献，后者包括 DOI、失败原因和最多两个链接。批量在工具预算前主动结束，`failed` 与 `skipped` 分开统计。
+- `src/pdf.ts` 用首页题名或 DOI 核对 PDF 身份。明确错配的候选会跳过且从人工补齐链接中移除。扫描件及其他证据不足的文件可保存，结果标为 `unverified`。
+- Crossref 精确 DOI 查询和字段映射位于 `src/sources/crossref.ts`。`verifyMetadata=true` 时标题不符或元数据未核实会阻止该篇下载；返回规范元数据供复核。在线年单独保留，卷期年优先，不再用注册记录的 `created` 年充当出版年。
+- `src/paper.ts` 使用共享合并逻辑处理普通去重与排序；强标识冲突不能靠同名记录合并，后续桥接记录能合并此前分开的相同论文。
+- `src/prompt.ts` 记录按研究问题选源、低召回拆查询、中国情境补查中文库，以及全文下载与全文核对的区别。它不替代用户的下载授权或本地规则。
+- 相关回归位于 `tests/download.spec.ts`、`tests/paper.spec.ts`、`tests/sources.spec.ts` 和 `tests/tools.spec.ts`。文件测试可通过 `SCHOLAR_TEST_TEMP_DIR` 指定项目约定临时目录，结束后清理；不设置时使用系统临时目录。
+
+验收范围和当前参数以 [设计文档的验收补充](DESIGN.md#检索与下载复盘对应的验收补充) 与 [中文说明](../README_CN.md#scholar_download--下载-pdf) 为准。网络挑战页和机构认证的真实可用性需要在目标环境另行验证；HTTP 403 不单独作为“缺少机构网”的证据。
+
+## 本地 MCP 入口
+
+`src/mcp/stdio.ts` 使用官方 TypeScript MCP SDK 启动本地进程。标准输出承载协议消息，启动和传输错误写入标准错误流。源码构建生成 `lib/mcp/stdio.js`，并通过包的 `bin` 声明提供 `dsh-scholar-mcp`。
+
+MCP 进程通过环境变量配置来源。通用工具每次调用的总预算为 30 秒，单次来源请求的超时为 8 秒。知网工具另有 30 秒启动预算，首次调用才连接内置服务。客户端取消沿查询信号传到来源。开放全文定位返回开放候选和文章页，访问验证和文件保存由 DSH 下载入口负责。客户端配置见 [MCP 接入](../README_CN.md#mcp-接入)。
+
+知网桥接读取 FastMCP 的结构化结果和文本兼容结果。上游工具错误会传回客户端。独立 MCP 在关闭连接时释放桥接；显式配置的上游端点由其启动方维护。
+
+中文下载在验证本次目录确认编号后启用项目内的 Playwright。确认编号保存在 MCP 连接内，验证通过后立即消耗。客户端负责向用户展示待确认目录并取得答复。文献浏览器使用专用持久配置，一次处理一篇下载，MCP 连接结束时关闭。确认后执行下载的预算为 60 秒。验收检查首次调用无下载副作用、确认编号一次使用、目录变更重新确认，以及实际文件路径、同名保护和认证交接。DSH 宿主的站内入口工具见 [现有使用说明](../README_CN.md#chinese_scholar_download--中文全文下载入口)。
 
 ## 目录
 
@@ -38,7 +67,7 @@
 - **全部检索走免费公开学术 API**，不经过任何付费代理，不消耗积分
 - **中文论文检索覆盖 CNKI、万方和维普**：CNKI 使用随包分发的 cnki-mcp，万方和维普使用现有 dsh-browser 工具
 - **下载走"OA 优先、多源 fallback"链**，尽可能从公开免费渠道拿到全文 PDF
-- 可选灰色渠道（Sci-Hub）作为最后 fallback，默认关闭
+- 灰色渠道（Sci-Hub）默认可用，作为 OA 来源之后的最后 fallback；直下工具无需开关
 - 登录、机构认证、验证码和受限全文下载由用户处理
 
 ### 1.2 定位
@@ -103,8 +132,8 @@ export function apply(ctx: Context, config: Config): void { ... }
 
 模型调用 scholar_download
   → tools/download.ts
-  → download.ts (buildFallbackChain)
-  → 按 10 级 fallback 链解析 OA PDF URL
+  → 试写目标目录，按需核对 DOI 元数据
+  → download.ts 逐级解析并立即尝试 OA PDF，命中即止
   → fetchPdfBytesDetailed 下载（Europe PMC 自动重试 3 次）
   → 失败时 browser.ts (Playwright) 重试反爬出版商
   → 保存到 downloadDir（会话工作区）
@@ -140,7 +169,7 @@ dsh-scholar-search/
 │   ├── browser.ts          # Playwright 浏览器下载（反爬出版商重试）
 │   ├── chinese/
 │   │   ├── cnki-mcp.ts     # 内置 cnki-mcp 的 HTTP 客户端、自动启动和生命周期
-│   │   └── browser-workflow.ts # 万方/维普 dsh-browser 工作流
+│   │   └── browser-workflow.ts # 万方/维普 详情与三站下载入口工作流
 │   ├── shared/
 │   │   └── constants.ts    # host/client 共享常量（namespace/route/PingResponse）
 │   ├── sources/            # 检索源适配器（每源一个文件）
@@ -158,7 +187,7 @@ dsh-scholar-search/
 │   │   ├── unpaywall.ts        # Unpaywall（仅 resolvePdf，机构仓库）
 │   │   ├── openaire.ts         # OpenAIRE（仅 resolvePdf）
 │   │   ├── crossref_page.ts    # Crossref 落地页解析（仅 resolvePdf，BMC/Springer 主力）
-│   │   └── grayarea.ts         # Sci-Hub 镜像（仅 resolvePdf，默认关闭）
+│   │   └── grayarea.ts         # Sci-Hub 镜像（仅 resolvePdf，默认可用）
 │   ├── tools/              # model-facing 工具
 │   │   ├── search.ts           # scholar_search
 │   │   ├── download.ts         # scholar_download
@@ -170,7 +199,7 @@ dsh-scholar-search/
 │       ├── controller.ts       # 状态管理（读 settingsScope + ping 路由 + 编辑写回）
 │       ├── locales.ts          # zh/en 字典 + LocaleNamespaceMap 声明合并
 │       └── styles.ts           # 样式（字符串注入，无 CSS pipeline）
-├── vendor/cnki-mcp/           # GPLv3 CNKI MCP 源码、来源备注和许可证，随包分发
+├── vendor/cnki-mcp/           # GPLv3 CNKI MCP 源码（上游 0.2.0）、来源备注和许可证，随包分发
 └── tests/                  # vitest 单测
     ├── paper.spec.ts           # 去重键/排序/abstract 重建
     ├── download.spec.ts        # fetchPdf/safeFilename/pdfCandidates
@@ -267,9 +296,9 @@ export interface Runtime {
 | **Unpaywall** | DOI → 机构仓库 OA PDF（KCL Pure、SDU、Bristol 等），原站反爬时的关键替代 |
 | OpenAIRE | 欧洲 OA 聚合补链 |
 | crossref_page | 解析出版商落地页 `citation_pdf_url` meta 标签，**BMC/Springer 主力通道**（~95% 成功率） |
-| grayarea | Sci-Hub 镜像（默认关闭） |
+| grayarea | Sci-Hub 镜像（默认可用，最后兜底） |
 
-### 5.3 中文论文检索
+### 5.3 中文检索、详情与下载入口
 
 中文检索由独立的 `chinese_scholar_search` 工具提供，不改变普通 `scholar_search` 的 API source fan-out。
 
@@ -279,7 +308,17 @@ export interface Runtime {
 | 万方 | dsh-browser `browser_*` 嵌套调用 | dsh-browser 当前受控标签页 | 读取快照和详情文本，不执行任意 JavaScript |
 | 维普 | dsh-browser `browser_*` 嵌套调用 | dsh-browser 当前受控标签页 | 验证码和访问限制由用户处理 |
 
-`chinese_scholar_detail` 将三个站点的详情字段转换为 `PaperMeta`，并保留 `keywords`。中文工具串行执行，避免同时操作一个受控标签页。
+`chinese_scholar_detail` 将三个站点的详情字段转换为 `PaperMeta`：CNKI 走 `cnki-mcp` 的 `get-info-from-url` 并映射 `volume`/`issue`/`pages`/`doi`/`institution`；万方用一次 `div.detailList` 的整块文本按“标签：值”切分，补齐 `publishDate`、`onlinePublishDate`、`organizations`、`funds`、`classifications` 与页码区间；维普从主数据块提取 DOI 与关键词。缺失字段省略，不推算。
+
+`chinese_scholar_download` 只做三件事：打开详情页、解析站点自身下载入口、在确认后按 `open` 在新的受控标签页打开它。
+
+- 下载候选来自快照交互元素（`role` + `href`），先按站点域名白名单过滤（`cnki.net` / `wanfangdata.com.cn` / `cqvip.com`），再排除详情页自身，最后按格式与名称路径打分：PDF +8、CAJ +2、`下载/全文` +4、路径含 download/pdf +3，导航类链接扣分。阅读页（HTML 阅读、原版阅读）直接排除。
+- 格式由 `formatOfDownload` 判定：名称或 URL 含 PDF → `pdf`，含 CAJ 或 `btn-dlcaj` → `caj`，只有「下载」字样 → `other`。知网同时提供 PDF/CAJ 时选 PDF；只剩 CAJ 时 `status` 为 `caj-only`，`message` 说明 CAJ 需要 CAJViewer 等专用阅读器、不能改扩展名冒充 PDF。
+- 整页快照没有命中时，按站点区域（CNKI `.download-btns`、万方 `div.detailIcon` / `div.buttons`、维普 `div.mainContainerDataList-item`）再读一次。
+- 默认 `open=false`：先解析并报告题名、格式、入口，用户确认后再传 `open=true`。`opened` 只表示入口已在浏览器打开，不等于下载完成；调用方需核对下载列表的文件名与保存位置，不猜目录、不覆盖同名文件。
+- 文件由浏览器保存，插件不读取、不落盘，因此不产生 `%PDF` 校验与文件大小。`scholar_download` 的 OA 链路不受影响。
+
+中文工具串行执行，避免同时操作一个受控标签页。
 
 ### 5.4 合并去重与排序（paper.ts）
 
@@ -302,25 +341,25 @@ biorxiv: 0.8, openalex: 0.78, crossref: 0.74, doaj: 0.7, core: 0.7
 
 ## 6. 下载 fallback 链
 
-对一篇 `PaperMeta`，按以下顺序尝试解析免费 PDF（`buildFallbackChain`）：
+对一篇 `PaperMeta`，按以下顺序逐级解析并尝试下载；`buildFallbackChain` 可用于完整探测：
 
 ```
-0. enrich:openalex    ← 只传 DOI 时先反查 OpenAlex 拿 OA URL（消除 tried:none）
-1. europe_pmc         ← 有 PMCID 时首选（官方 getPdf，医学命中率 ~90%）
+1. europe_pmc         ← 官方 getPdf，可按 DOI/PMID 反查 PMCID
 2. direct             ← openAccessPdfUrl 原站直取（PLOS/Frontiers/BMC 友好）
-3. unpaywall          ← 机构仓库副本（KCL Pure/SDU/Bristol，反爬替代）
-4. semantic_scholar   ← S2 缓存 OA PDF（老论文、原站下线）
-5. preprint           ← arXiv/bioRxiv 直链模式
-6. openaire           ← OpenAIRE 补链
-7. core               ← CORE 仓储
-8. crossref_page      ← 出版商落地页 meta（Springer/BMC 兜底，~95%）
-9. publisher_patterns ← 出版商 OA URL 模式识别
-10. grayarea          ← Sci-Hub（仅 allowGrayArea:true）
+3. openalex           ← OpenAlex 解析 OA PDF
+4. unpaywall          ← 机构仓库副本
+5. semantic_scholar   ← S2 登记的 OA 链接
+6. preprint           ← arXiv/bioRxiv 直链模式
+7. openaire           ← OpenAIRE 补链
+8. core               ← CORE 仓储
+9. crossref_page      ← 出版商落地页 meta
+10. publisher_patterns ← 出版商 OA URL 模式识别
+11. grayarea          ← Sci-Hub（默认可用）
 ```
 
 **关键设计决策**：
 - **Europe PMC 前置到第 1 位**（有 PMCID 时）：它的官方 getPdf 端点是医学/护理最高效通道
-- **enrich 步骤**：只传 identifier 时先反查 OpenAlex，否则链路没有候选会报 `tried: none`
+- **逐级执行**：在已知直链之后查 OpenAlex，保留裸 identifier 的补链能力；已命中的下载不会触发后续来源查询
 - **每级即使没候选也记录到 `attempted`**：失败时 `triedSources` 显示所有尝试过的级别，便于诊断
 - **失败细分状态码**：`failures` 字段带原因（`direct:wiley.com(http-403)`、`direct:zenodo.org(not-pdf)`），区分"反爬"与"无此文件"
 
@@ -412,7 +451,7 @@ resolvePdf(paper):
 ### 10.1 功能
 
 - **配置摘要**：显示当前下载目录、启用的源、灰色渠道状态、邮箱配置状态
-- **可编辑表单**：email、4 个 API key（密码框）、downloadDir、allowGrayArea 复选框
+- **可编辑表单**：email、4 个 API key（密码框）、downloadDir；灰色渠道默认可用，无启用开关
 - **已配置字段显示**：邮箱/下载目录 placeholder 显示当前值，API key 显示 `••••••••••••` 占位符，标签旁有"已保存"徽章
 - **源连通性测试**：ping 11 个源，显示延迟或失败原因
 
@@ -457,7 +496,6 @@ ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
 | `pubmedApiKey` | — | NCBI 可选 key（3→10 req/s） |
 | `coreApiKey` | — | CORE 可选 key（免费注册） |
 | `googleScholarApiKey` | — | SerpAPI key（Google Scholar，付费） |
-| `allowGrayArea` | false | 启用 Sci-Hub 镜像（法律风险自负） |
 | `grayAreaMirrors` | 内置列表 | 灰色渠道镜像 URL 模板 |
 | `downloadDir` | `download/papers` | 下载目录（相对工作区或绝对） |
 | `enabledSources` | 全部 | 参与检索的源子集 |
@@ -545,13 +583,13 @@ node "$HOME/.dsh/profiles/node_modules/@deepseek-ai/dsh/lib/bin.js" plugin --pro
 
 ## 14. 测试
 
-55 个单测（vitest），覆盖：
+95 个单测（vitest），覆盖：
 
 - **paper.spec.ts**：normalizeTitle、paperKeys、mergePapers、mergePaperLists、scorePaper、mergeAndRank、rebuildAbstract
 - **download.spec.ts**：looksLikePdf、safeFilename、pdfCandidatesFor、fetchPdfBytes（mock fetch）
 - **sources.spec.ts**：normalizeOpenAlexWork、parseArxivFeed、normalizeSerpApiResult、europePmcOfficialPdfUrl、europePmcPmcidWithPdf、openAlexPdfCandidates、各源 search（mock fetch）
 - **throttle.spec.ts**：buildThrottle 间隔/独立/abort、throttleSource 包装
-- **chinese.spec.ts**：中文快照解析、URL 校验和 cnki-mcp 响应规范化
+- **chinese.spec.ts**：中文快照解析（角色、状态标记、href）、标签行字段切分、作者/DOI 规范化、下载候选筛选（域名白名单、排除详情页与阅读页、PDF 优先）、格式识别与 `caj-only`、工具层默认只解析、详情字段装配（用假 ctx 回放 dsh-browser 文本）、cnki-mcp 响应规范化
 
 mock 方式：`vi.stubGlobal('fetch', vi.fn(...))` 录制真实 API 响应 JSON。
 
@@ -607,10 +645,13 @@ OpenAlex 的 `abstract_inverted_index` 是词→位置数组，不是纯文本�
 ### 15.9 中文检索与第三方运行时
 
 - `cnki-mcp` 源码位于 `vendor/cnki-mcp`，许可证为 GPLv3，不能按 MIT 组件处理。
-- `vendor/cnki-mcp/VENDOR.md` 固定上游仓库、提交 SHA 和版本；升级 vendor 时同步更新。
+- `vendor/cnki-mcp/VENDOR.md` 固定上游仓库、提交 SHA 和版本；升级 vendor 时同步更新。当前同步到上游 `0.2.0`（`dcd7931`），相对 `0.1.1` 只有 `detail_parser.py` 把作者区的 `/organ/detail` 链接改归 `institution`（作者与机构不再混淆）、`pyproject.toml` 版本与 docs 依赖、以及文档；运行时依赖未变，MCP 工具名（`easy-search`、`get-info-from-url`）未变，客户端无需改动。
 - 自动启动只管理插件自己创建的 `uv` 子进程；服务已有时直接复用，不停止外部进程。
 - 首次 CNKI 使用仍需用户执行一次 `uv run cnki-mcp init` 完成登录或机构认证；凭据和 profile 不进入插件包。
 - 万方和维普依赖 dsh-browser 当前的文本工具，无法执行中文 skill 原有的任意页面 JavaScript。
+- `browser_get_text(selector)` 内部是 `document.querySelector`，**只返回第一个匹配元素**：列表字段（作者、关键词）必须读容器后按分隔符切分，不能指望选择器本身枚举多个节点；区域快照（`region`）也只影响主文，不裁剪交互元素清单。
+- 下载入口不写在 `vendor/cnki-mcp` 里：上游把 `download_url` 置空并注明“暂时不要下载的功能”，插件因此统一改由 dsh-browser 读页面上的下载入口，避免修改 GPLv3 组件的合规判断。
+- 插件进程不抓取中文全文，所以 `chinese_scholar_download` 没有 `%PDF` 校验和文件大小；这是与 `scholar_download` 有意不同的一处。
 
 ---
 
@@ -618,20 +659,25 @@ OpenAlex 的 `abstract_inverted_index` 是词→位置数组，不是纯文本�
 
 ### 已知限制
 
-- **真正非 OA 的论文无法下载**（版权限制）：fallback 链只找合法 OA 副本，付费论文如实报告 `no-free-fulltext`
+- **全文可用性取决于来源与访问条件**：`no-free-fulltext` 只表示本次没有取得 PDF，结合 `failureKind` 和 `attempts` 判断后续动作
 - **Google Scholar 需 SerpAPI key**（付费）：无 key 时该源跳过
 - **arXiv 在非 CS 领域噪音大**：护理/医学检索会混入 CS/ML 论文，未来可加 `excludeSources` 学科过滤
-- **基础设施故障**（如 nsuworks DNS 故障）：标记为失败但不区分"待重试"与"真无 OA"
-- **批量下载接口未实现**：目前逐篇调用
+- **基础设施故障**：可识别下载的 DNS、超时、HTTP 和挑战页；来源解析接口仍可能把请求失败降级为空，空链不能证明没有 OA
+- **批量总预算有限**：`papers` 顺序处理，预算用尽会返回当前结果与未尝试项；由调用方按结果分批重试
 - **中文检索需要额外运行时**：CNKI 需要 Python 3.11+、uv、Playwright 和已初始化 profile；万方/维普需要连接的 dsh-browser 标签页
+- **中文下载入口取决于用户权限**：`no-download-link` 不区分“没订阅”“未登录”“按钮没渲染”，只能结合页面状态人工判断；插件不代为登录或订阅
+- **维普没有下载入口字段**：抽取规格不提供 `pdf_url`，该站点的预期结果是 `no-download-link`
+- **CAJ 不是 PDF**：知网部分文献只提供 CAJ，工具返回 `caj-only`；插件不提供 CAJ 转 PDF，也不改扩展名
+- **中文库选择器尚未逐站实测下载**：下载候选规则来自技能规格与 dsh-browser 快照格式；命中与否取决于页面当时的渲染，`no-download-link` 需要在真实会话中核对页面结构
+- **作者列表靠文本切分**：dsh-browser 不支持执行页面脚本，`browser_get_text` 只取第一个匹配元素，拉丁姓名可能被按空格拆开，需要核对
 
 ### 未来方向（按优先级）
 
-1. **批量下载接口**：接受 paper 数组，并发 + 限流，返回结构化清单（经验总结 P2-9）
+1. **批量并发调度**：在已有结构化逐篇结果与总量统计基础上，按源限流并发执行
 2. **`excludeSources` / 学科过滤**：医学检索默认排除 arXiv（经验总结 P2-10）
 3. **OA 状态与下载状态分离**：`oa_verified`（元数据确认 OA）vs `download_status`（downloaded/network_restricted/cloudflare/dns_failure/no_legal_oa），避免把"确认 OA 但当前不可达"误报为"付费"（经验总结 §12.1）
 4. **下载前内容核验**：保存前读首页标题/DOI 与请求比对，不一致标记 `identity_mismatch`（经验总结 §12.7）
-5. **Cloudflare 特征识别**：响应含 `Just a moment...` 时标记 `cloudflare_challenge`（经验总结 §12.4）
+5. **来源解析诊断贯通**：让元数据补链请求也返回具体 HTTP／网络诊断，补齐当前下载候选的 `challenge` 等分类
 6. **可验证下载**：Zenodo 等仓库读 `size`/`checksum` 做完整性校验（经验总结 §12.10）
 7. **后台重试**：DNS 故障是临时的，记录"待重试"状态周期重试（经验总结 §10.2）
 

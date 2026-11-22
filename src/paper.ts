@@ -8,6 +8,30 @@
 import { normalizeArxivId, normalizeDoi, normalizePmid } from './http.js'
 import type { PaperMeta } from './types.js'
 
+/** 把 DOI、arXiv ID 或 PMID 转为来源解析器使用的最小题录。 */
+export function paperFromIdentifier(identifier: string): PaperMeta {
+  const trimmed = identifier.trim()
+  if (trimmed.length === 0) throw new Error('identifier must be a non-empty string')
+  const doi = normalizeDoi(trimmed)
+  if (doi !== undefined) {
+    return { title: doi, doi, source: 'identifier', sourceId: doi, landingPageUrl: `https://doi.org/${doi}` }
+  }
+  const arxivId = normalizeArxivId(trimmed)
+  if (arxivId !== undefined) {
+    return {
+      title: `arXiv:${arxivId}`, arxivId, source: 'arxiv', sourceId: arxivId,
+      isOpenAccess: true,
+      openAccessPdfUrl: `https://arxiv.org/pdf/${arxivId}`,
+      landingPageUrl: `https://arxiv.org/abs/${arxivId}`,
+    }
+  }
+  const pmid = normalizePmid(trimmed)
+  if (pmid !== undefined && /^\d+$/.test(trimmed)) {
+    return { title: `PMID ${pmid}`, pmid, source: 'pubmed', sourceId: pmid, landingPageUrl: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` }
+  }
+  throw new Error(`"${identifier}" is not a recognized identifier (expected a DOI, arXiv id, or PMID); pass a paper object from scholar_search instead`)
+}
+
 /** Source quality weights (local_paper_hub `SOURCE_QUALITY`). */
 export const SOURCE_QUALITY: Record<string, number> = {
   pubmed: 1.0,
@@ -87,8 +111,16 @@ export function mergePapers(base: PaperMeta, incoming: PaperMeta): PaperMeta {
   }
   const authors = (base.authors?.length ?? 0) >= (incoming.authors?.length ?? 0) ? base.authors : incoming.authors
   if (authors !== undefined && authors.length > 0) merged.authors = authors
-  const year = base.year ?? incoming.year
+  const printYear = base.printYear ?? incoming.printYear
+  const onlineYear = base.onlineYear ?? incoming.onlineYear
+  const year = printYear ?? base.year ?? incoming.year
   if (year !== undefined) merged.year = year
+  if (printYear !== undefined) merged.printYear = printYear
+  if (onlineYear !== undefined) merged.onlineYear = onlineYear
+  for (const field of ['volume', 'issue', 'pages', 'articleNumber'] as const) {
+    const value = base[field] ?? incoming[field]
+    if (value !== undefined) merged[field] = value
+  }
   const venue = better(base.venue, incoming.venue)
   if (venue !== undefined) merged.venue = venue
   const abstract = better(base.abstract, incoming.abstract)
@@ -121,26 +153,39 @@ export function mergePapers(base: PaperMeta, incoming: PaperMeta): PaperMeta {
  * @returns the deduped list, first-occurrence order.
  */
 export function mergePaperLists(papers: PaperMeta[]): PaperMeta[] {
-  const merged = new Map<string, PaperMeta>()
-  const aliases = new Map<string, string>()
-  let fallback = 0
-  for (const paper of papers) {
-    let keys = paperKeys(paper)
-    if (keys.length === 0) keys = [`fallback:${++fallback}`]
-    let canonical: string | undefined
-    for (const key of keys) {
-      const alias = aliases.get(key)
-      if (alias !== undefined) {
-        canonical = alias
+  return mergeEntries(papers.map((paper) => ({ paper, score: 0 }))).map((entry) => entry.paper)
+}
+
+/** 强标识冲突时保留两条；桥接记录可合并此前分开的同篇记录。 */
+function mergeEntries(entries: { paper: PaperMeta; score: number }[]): { paper: PaperMeta; score: number }[] {
+  const groups: { paper: PaperMeta; score: number; keys: Set<string> }[] = []
+  for (const entry of entries) {
+    let paper: PaperMeta = { ...entry.paper, oaSources: entry.paper.oaSources ?? [entry.paper.source] }
+    let score = entry.score
+    const keys = new Set(paperKeys(paper))
+    let target: typeof groups[number] | undefined
+    for (let index = 0; index < groups.length;) {
+      const group = groups[index]!
+      let conflict = false
+      for (const field of ['doi', 'arxivId', 'pmid'] as const) {
+        const normalize = field === 'doi' ? normalizeDoi : field === 'arxivId' ? normalizeArxivId : normalizePmid
+        const left = normalize(paper[field])
+        const right = normalize(group.paper[field])
+        if (left === undefined || right === undefined) continue
+        // 第一个双方均有的标识决定身份；相同 DOI 优先于平台次级标识。
+        conflict = left.toLowerCase() !== right.toLowerCase()
         break
       }
+      if (conflict || ![...keys].some((key) => group.keys.has(key))) { index++; continue }
+      paper = mergePapers(group.paper, paper)
+      score = Math.max(score, group.score)
+      for (const key of group.keys) keys.add(key)
+      if (target === undefined) { target = group; index++ } else { groups.splice(index, 1) }
     }
-    canonical = canonical ?? keys[0]!
-    const current = merged.get(canonical)
-    merged.set(canonical, current === undefined ? { ...paper, oaSources: [paper.source] } : mergePapers(current, paper))
-    for (const key of keys) aliases.set(key, canonical)
+    if (target === undefined) groups.push({ paper, score, keys })
+    else Object.assign(target, { paper, score, keys })
   }
-  return [...merged.values()]
+  return groups
 }
 
 /**
@@ -176,31 +221,9 @@ export function scorePaper(paper: PaperMeta, rankInSource: number, listSize: num
  * @returns the deduped, ranked list.
  */
 export function mergeAndRank(results: PaperMeta[][], limit: number, nowYear: number): PaperMeta[] {
-  const merged = new Map<string, { paper: PaperMeta; score: number }>()
-  const aliases = new Map<string, string>()
-  let fallback = 0
-  for (const list of results) {
-    list.forEach((paper, index) => {
-      const score = scorePaper(paper, index, list.length, nowYear)
-      let keys = paperKeys(paper)
-      if (keys.length === 0) keys = [`fallback:${++fallback}`]
-      let canonical: string | undefined
-      for (const key of keys) {
-        const alias = aliases.get(key)
-        if (alias !== undefined) {
-          canonical = alias
-          break
-        }
-      }
-      canonical = canonical ?? keys[0]!
-      const current = merged.get(canonical)
-      merged.set(canonical, current === undefined
-        ? { paper: { ...paper, oaSources: [paper.source] }, score }
-        : { paper: mergePapers(current.paper, paper), score: Math.max(current.score, score) })
-      for (const key of keys) aliases.set(key, canonical)
-    })
-  }
-  const scored = [...merged.values()]
+  const scored = mergeEntries(results.flatMap((list) => list.map((paper, index) => ({
+    paper, score: scorePaper(paper, index, list.length, nowYear),
+  }))))
   scored.sort((a, b) => b.score - a.score)
   return scored.slice(0, Math.max(1, limit)).map((entry) => entry.paper)
 }

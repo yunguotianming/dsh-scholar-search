@@ -1,14 +1,14 @@
 /**
  * dsh-scholar-search: free academic literature search + OA full-text download
  * for DeepSeek Harness. Registers scholar_search / scholar_download /
- * scholar_read on `ctx.tools`, a system-prompt guidance section, a settings
- * section (hot-updatable config), and `GET /scholar-search/ping` on the web
- * server for the settings card's connectivity checks.
+ * scholar_read plus the Chinese CNKI/Wanfang/CQVIP search, detail, and
+ * site-download-entry tools on `ctx.tools`, a system-prompt guidance section, a
+ * settings section (hot-updatable config), and `GET /scholar-search/ping` on the
+ * web server for the settings card's connectivity checks.
  * @module dsh-scholar-search
  */
 
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -24,12 +24,10 @@ import { applySearchTool } from './tools/search.js'
 import { applyDownloadTool, applyScihubDownloadTool } from './tools/download.js'
 import { applyReadTool } from './tools/read.js'
 import { applyChineseSearchTools } from './tools/chinese-search.js'
-import { CnkiMcpManager } from './chinese/cnki-mcp.js'
+import { CNKI_MCP_DEFAULTS, CnkiMcpManager } from './chinese/cnki-mcp.js'
 import { PING_ROUTE, SETTINGS_NAMESPACE } from './shared/constants.js'
 import type { PingResponse } from './shared/constants.js'
 import type { Runtime } from './runtime.js'
-
-const DEFAULT_CNKI_MCP_PROJECT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../vendor/cnki-mcp')
 
 export type { PaperMeta, ScholarSource, SearchQuery } from './types.js'
 export { normalizeTitle, paperKeys, mergePapers, mergePaperLists, scorePaper, mergeAndRank, SOURCE_QUALITY } from './paper.js'
@@ -48,7 +46,7 @@ export const name = 'scholar-search'
 export const inject = ['tools', 'systemPrompt']
 
 /** Version string sent in the `User-Agent`; kept in sync with package.json. */
-export const VERSION = '0.2.0'
+export const VERSION = '0.3.1'
 
 export { PING_ROUTE, SETTINGS_NAMESPACE } from './shared/constants.js'
 export type { PingResponse } from './shared/constants.js'
@@ -65,9 +63,7 @@ export interface Config {
   coreApiKey?: string
   /** SerpAPI key for Google Scholar (paid, free tier 100/month); the source is skipped without it. */
   googleScholarApiKey?: string
-  /** Enable gray-area mirrors (Sci-Hub) as the LAST download fallback. Off by default. Legal risk is yours — see README. */
-  allowGrayArea?: boolean
-  /** Gray-area mirror URL templates with a `{doi}` placeholder; only used when allowGrayArea is true. */
+  /** 灰色渠道镜像 URL 模板（{doi} 占位符），用于最后兜底和直接下载。 */
   grayAreaMirrors?: string[]
   /** Directory PDFs download into (relative to the workspace, or absolute). Defaults to `download/papers` under the workspace. */
   downloadDir?: string
@@ -109,8 +105,7 @@ export const Config: Schema<Config> = Schema.object({
   pubmedApiKey: Schema.string().role('secret').default('').description('NCBI E-utilities API key (optional; 3 req/s without, 10 req/s with).'),
   coreApiKey: Schema.string().role('secret').default('').description('CORE API key (optional, free registration at core.ac.uk); the CORE source is skipped without it.'),
   googleScholarApiKey: Schema.string().role('secret').default('').description('SerpAPI key for Google Scholar (optional, paid with free tier 100/month); the source is skipped without it.'),
-  allowGrayArea: Schema.boolean().default(false).description('Enable gray-area mirrors (Sci-Hub) as the LAST download fallback. May be illegal in your jurisdiction — you bear the risk.'),
-  grayAreaMirrors: Schema.array(Schema.string()).default([...DEFAULT_GRAYAREA_MIRRORS]).description('Gray-area mirror URL templates ({doi} placeholder); only used when allowGrayArea is true.'),
+  grayAreaMirrors: Schema.array(Schema.string()).default([...DEFAULT_GRAYAREA_MIRRORS]).description('灰色渠道镜像 URL 模板（{doi} 占位符），用于最后兜底和 Sci-Hub 直接下载，默认可用。'),
   downloadDir: Schema.string().default('download/papers').description('Directory PDFs download into (relative to the workspace, or absolute).'),
   enabledSources: Schema.array(Schema.string()).default([...SEARCH_SOURCE_IDS]).description(`Search sources participating in scholar_search: ${SEARCH_SOURCE_IDS.join(', ')}.`),
   sourceTimeoutMs: Schema.number().default(15_000).description('Per-source request timeout (ms).'),
@@ -122,11 +117,11 @@ export const Config: Schema<Config> = Schema.object({
   browserExecutablePath: Schema.string().default('').description('Explicit browser executable path (optional); absent probes the chrome/msedge channels.'),
   chineseSearchEnabled: Schema.boolean().default(true).description('Enable Chinese paper search on CNKI, Wanfang, and CQVIP.'),
   cnkiMcpAutoStart: Schema.boolean().default(true).description('Start cnki-mcp automatically when CNKI search is first used.'),
-  cnkiMcpEndpoint: Schema.string().default('http://127.0.0.1:7788/mcp').description('cnki-mcp Streamable HTTP endpoint.'),
-  cnkiMcpExecutable: Schema.string().default('uv').description('Executable used to start cnki-mcp.'),
-  cnkiMcpProjectDir: Schema.string().default(DEFAULT_CNKI_MCP_PROJECT_DIR).description('cnki-mcp project directory for automatic startup.'),
-  cnkiMcpStartupTimeoutMs: Schema.number().default(30_000).description('Startup wait budget for cnki-mcp in milliseconds.'),
-  cnkiMcpMinIntervalMs: Schema.number().default(3_000).description('Minimum interval between CNKI business calls; protects the account from burst traffic.'),
+  cnkiMcpEndpoint: Schema.string().default(CNKI_MCP_DEFAULTS.endpoint).description('cnki-mcp Streamable HTTP endpoint.'),
+  cnkiMcpExecutable: Schema.string().default(CNKI_MCP_DEFAULTS.executable).description('Executable used to start cnki-mcp.'),
+  cnkiMcpProjectDir: Schema.string().default(CNKI_MCP_DEFAULTS.projectDir).description('cnki-mcp project directory for automatic startup.'),
+  cnkiMcpStartupTimeoutMs: Schema.number().default(CNKI_MCP_DEFAULTS.startupTimeoutMs).description('Startup wait budget for cnki-mcp in milliseconds.'),
+  cnkiMcpMinIntervalMs: Schema.number().default(CNKI_MCP_DEFAULTS.minIntervalMs).description('Minimum interval between CNKI business calls; protects the account from burst traffic.'),
 })
 
 /** Complete config after schemastery applies every default. */
@@ -204,7 +199,6 @@ export function apply(ctx: Context, config: Config): void {
     pubmedApiKey: () => nonEmpty(current().pubmedApiKey),
     coreApiKey: () => nonEmpty(current().coreApiKey),
     googleScholarApiKey: () => nonEmpty(current().googleScholarApiKey),
-    allowGrayArea: () => current().allowGrayArea,
     grayAreaMirrors: () => current().grayAreaMirrors.length > 0 ? current().grayAreaMirrors : [...DEFAULT_GRAYAREA_MIRRORS],
     sourceMinIntervals: () => current().sourceMinIntervals,
   })
@@ -223,8 +217,8 @@ export function apply(ctx: Context, config: Config): void {
     // Resolve per call: downloadDir relative to the session workspace cwd, not
     // the harness launch directory. An absolute downloadDir wins outright; a
     // call with no agent falls back to the plugin launch cwd.
-    resolveDownloadDir: (exec) => {
-      const configured = current().downloadDir
+    resolveDownloadDir: (exec, override) => {
+      const configured = override?.trim() || current().downloadDir
       const base = exec.agent?.session.header.cwd ?? process.cwd()
       return resolve(base, configured)
     },
@@ -237,7 +231,7 @@ export function apply(ctx: Context, config: Config): void {
 
   applySearchTool(ctx, runtime)
   applyDownloadTool(ctx, runtime)
-  applyScihubDownloadTool(ctx, runtime, () => current().allowGrayArea, () => current().grayAreaMirrors)
+  applyScihubDownloadTool(ctx, runtime, () => current().grayAreaMirrors)
   applyReadTool(ctx, runtime)
   applyChineseSearchTools(ctx, runtime)
 
@@ -322,5 +316,30 @@ export function apply(ctx: Context, config: Config): void {
 }
 
 export { CnkiMcpManager } from './chinese/cnki-mcp.js'
-export { ChineseBrowserWorkflow, isDetailUrl, parseSnapshot, providerFromUrl, resolveHref } from './chinese/browser-workflow.js'
-export { applyChineseSearchTools } from './tools/chinese-search.js'
+export {
+  ChineseBrowserWorkflow,
+  DOWNLOAD_REGIONS,
+  chineseSourceFromUrl,
+  cleanAbstract,
+  cleanDoi,
+  firstDate,
+  formatOfDownload,
+  isDetailUrl,
+  parseAuthors,
+  parseDownloadCandidates,
+  parseLabelRows,
+  parseSnapshot,
+  providerFromUrl,
+  resolveHref,
+  splitList,
+  yearFromText,
+} from './chinese/browser-workflow.js'
+export type {
+  ChineseDownloadResult,
+  ChineseProvider,
+  DownloadCandidate,
+  DownloadFormat,
+  Snapshot,
+  SnapshotItem,
+} from './chinese/browser-workflow.js'
+export { applyChineseSearchTools, paperFromCnkiRecord } from './tools/chinese-search.js'

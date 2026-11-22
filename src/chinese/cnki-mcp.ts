@@ -4,7 +4,19 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
+import { setTimeout as delay } from 'node:timers/promises'
+import { fileURLToPath } from 'node:url'
+import { buildThrottle } from '../throttle.js'
 import type { PaperMeta, SearchQuery } from '../types.js'
+import { splitList } from './browser-workflow.js'
+
+export const CNKI_MCP_DEFAULTS = {
+  endpoint: 'http://127.0.0.1:7788/mcp',
+  executable: 'uv',
+  projectDir: fileURLToPath(new URL('../../vendor/cnki-mcp', import.meta.url)),
+  startupTimeoutMs: 30_000,
+  minIntervalMs: 3_000,
+}
 
 export interface CnkiMcpOptions {
   enabled: boolean
@@ -53,13 +65,19 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 
 function extractToolValue(value: unknown): unknown {
   const record = recordValue(value)
-  const structured = record?.structuredContent
-  if (structured !== undefined) return structured
   const content = record?.content
-  if (!Array.isArray(content)) return value
-  const text = content
+  const text = (Array.isArray(content) ? content : [])
     .map(item => recordValue(item)?.text)
     .find(item => typeof item === 'string')
+  if (record?.isError === true) throw new Error(textValue(text) ?? '知网服务返回工具错误')
+  const structured = record?.structuredContent
+  if (structured !== undefined) {
+    const wrapper = recordValue(structured)
+    return wrapper !== undefined && Object.keys(wrapper).length === 1 && Object.hasOwn(wrapper, 'result')
+      ? wrapper.result
+      : structured
+  }
+  if (!Array.isArray(content)) return value
   if (typeof text !== 'string') return value
   try {
     return JSON.parse(text)
@@ -74,6 +92,42 @@ function normalizeYear(value: unknown): number | undefined {
   if (text === undefined) return undefined
   const match = text.match(/\b(\d{4})\b/)
   return match === null ? undefined : Number(match[1])
+}
+
+/** 把知网详情转换成插件通用的题录格式。 */
+export function paperFromCnkiRecord(raw: Record<string, unknown>, url: string): PaperMeta {
+  const title = textValue(raw.title) ?? url
+  const paper: PaperMeta = { title, source: 'cnki_mcp', sourceId: url, landingPageUrl: url }
+  if (Array.isArray(raw.authors)) {
+    const authors = raw.authors.map(textValue).filter((author): author is string => author !== undefined)
+    if (authors.length > 0) paper.authors = authors
+  }
+  const venue = textValue(raw.journal) ?? textValue(raw.source)
+  if (venue !== undefined) paper.venue = venue
+  for (const field of ['abstract', 'doi', 'volume', 'issue', 'pages'] as const) {
+    const value = textValue(raw[field])
+    if (value !== undefined) paper[field] = value
+  }
+  if (Array.isArray(raw.keywords)) {
+    const keywords = raw.keywords.map(textValue).filter((keyword): keyword is string => keyword !== undefined)
+    if (keywords.length > 0) paper.keywords = keywords
+  }
+  const organizations = splitList(textValue(raw.institution))
+  if (organizations.length > 0) paper.organizations = organizations
+  const year = normalizeYear(raw.year)
+  if (year !== undefined) paper.year = year
+  return paper
+}
+
+export async function readCnkiPaper(manager: CnkiMcpManager, url: string, signal: AbortSignal): Promise<PaperMeta> {
+  const parsed = new URL(url)
+  if (parsed.origin !== 'https://kns.cnki.net' || parsed.username || parsed.password ||
+      !['/kcms2/article/abstract', '/kcms/detail/detail.aspx'].includes(parsed.pathname.toLowerCase())) {
+    throw new Error('需要知网检索返回的 HTTPS 论文详情页地址')
+  }
+  const raw = await manager.detail(url, signal)
+  if (textValue(raw.title) === undefined) throw new Error(textValue(raw.error) ?? '知网未返回论文题名，请从检索结果重新打开详情')
+  return paperFromCnkiRecord(raw, url)
 }
 
 function normalizeResult(value: unknown, index: number): PaperMeta | undefined {
@@ -110,39 +164,47 @@ function normalizeResult(value: unknown, index: number): PaperMeta | undefined {
 /** 管理一个可复用的 cnki-mcp HTTP 服务进程。 */
 export class CnkiMcpManager {
   private sessionId: string | undefined
+  private protocolVersion: string | undefined
   private requestId = 0
   private process: ChildProcess | undefined
   private starting: Promise<void> | undefined
   private ready = false
   private processError: string | undefined
-  private lastToolCallAt = 0
+  private readonly lifecycle = new AbortController()
+  private readonly throttle = buildThrottle(() => ({}), () => this.getOptions().minIntervalMs)
 
   constructor(private readonly getOptions: () => CnkiMcpOptions) {}
 
   private async request(method: string, params: Record<string, unknown> | undefined, signal: AbortSignal): Promise<unknown> {
     const options = this.getOptions()
-    const body = JSON.stringify({ jsonrpc: '2.0', id: ++this.requestId, method, ...(params === undefined ? {} : { params }) })
+    const notification = method.startsWith('notifications/')
+    const body = JSON.stringify({ jsonrpc: '2.0', ...(notification ? {} : { id: ++this.requestId }), method, ...(params === undefined ? {} : { params }) })
     const headers: Record<string, string> = {
       Accept: 'application/json, text/event-stream',
       'Content-Type': 'application/json',
     }
     if (this.sessionId !== undefined) headers['mcp-session-id'] = this.sessionId
+    if (this.protocolVersion !== undefined) headers['mcp-protocol-version'] = this.protocolVersion
     const response = await fetch(options.endpoint, { method: 'POST', headers, body, signal })
     const session = response.headers.get('mcp-session-id')
     if (session !== null && session.length > 0) this.sessionId = session
     if (!response.ok) throw new Error(`cnki-mcp HTTP ${response.status}`)
+    if (notification) return undefined
     const envelope = parseResponse(await response.text())
     if (envelope.error !== undefined) throw new Error(envelope.error.message ?? 'cnki-mcp request failed')
     return envelope.result
   }
 
   private async initialize(signal: AbortSignal): Promise<void> {
-    await this.request('initialize', {
+    this.sessionId = undefined
+    this.protocolVersion = undefined
+    const result = await this.request('initialize', {
       protocolVersion: '2025-06-18',
       capabilities: {},
-      clientInfo: { name: 'dsh-scholar-search', version: '0.2.0' },
+      clientInfo: { name: 'dsh-scholar-search', version: '0.3.1' },
     }, signal)
-    await this.request('notifications/initialized', undefined, signal).catch(() => undefined)
+    this.protocolVersion = textValue(recordValue(result)?.protocolVersion) ?? '2025-06-18'
+    await this.request('notifications/initialized', undefined, signal)
   }
 
   private spawnProcess(): void {
@@ -167,6 +229,7 @@ export class CnkiMcpManager {
   }
 
   private async ensureReady(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
     if (this.ready) return
     if (this.starting !== undefined) return this.starting
     this.starting = (async () => {
@@ -175,21 +238,27 @@ export class CnkiMcpManager {
         this.ready = true
         return
       } catch (firstError) {
+        signal.throwIfAborted()
         const options = this.getOptions()
         if (!options.autoStart) throw firstError
+        const endpoint = new URL(options.endpoint)
+        if (endpoint.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(endpoint.hostname)) throw firstError
+        this.processError = undefined
         if (this.process === undefined) this.spawnProcess()
-        const deadline = Date.now() + options.startupTimeoutMs
+        const startupSignal = AbortSignal.any([signal, AbortSignal.timeout(options.startupTimeoutMs)])
         let lastError: unknown = firstError
-        while (Date.now() < deadline) {
+        while (!startupSignal.aborted) {
           try {
-            await this.initialize(signal)
+            await this.initialize(startupSignal)
             this.ready = true
             return
           } catch (error) {
             lastError = error
-            await new Promise(resolve => setTimeout(resolve, 500))
+            if (this.processError !== undefined && this.process === undefined) break
+            await delay(500, undefined, { signal: startupSignal }).catch(() => undefined)
           }
         }
+        signal.throwIfAborted()
         const detail = this.processError ?? (lastError instanceof Error ? lastError.message : String(lastError))
         throw new Error(`cnki-mcp startup timed out: ${detail}`)
       }
@@ -200,24 +269,18 @@ export class CnkiMcpManager {
   async callTool(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
     const options = this.getOptions()
     if (!options.enabled) throw new Error('cnki-mcp source is disabled')
-    await this.ensureReady(signal)
-    const waitMs = options.minIntervalMs - (Date.now() - this.lastToolCallAt)
-    if (waitMs > 0) await new Promise<void>((resolve, reject) => {
-      const finish = () => { signal.removeEventListener('abort', abort); resolve() }
-      const timer = setTimeout(finish, waitMs)
-      const abort = () => { clearTimeout(timer); reject(signal.reason ?? new Error('aborted')) }
-      if (signal.aborted) { abort(); return }
-      signal.addEventListener('abort', abort, { once: true })
-    })
-    if (signal.aborted) throw signal.reason ?? new Error('aborted')
-    this.lastToolCallAt = Date.now()
+    const requestSignal = AbortSignal.any([signal, this.lifecycle.signal])
+    await this.ensureReady(requestSignal)
+    await this.throttle.wait('cnki', requestSignal)
+    requestSignal.throwIfAborted()
+    let result: unknown
     try {
-      const result = await this.request('tools/call', { name, arguments: args }, signal)
-      return extractToolValue(result)
+      result = await this.request('tools/call', { name, arguments: args }, requestSignal)
     } catch (error) {
       this.ready = false
       throw error
     }
+    return extractToolValue(result)
   }
 
   async search(query: SearchQuery, signal: AbortSignal): Promise<PaperMeta[]> {
@@ -235,12 +298,13 @@ export class CnkiMcpManager {
   }
 
   async close(): Promise<void> {
+    this.lifecycle.abort()
     const child = this.process
     this.process = undefined
     this.sessionId = undefined
+    this.protocolVersion = undefined
     this.ready = false
     this.processError = undefined
-    this.lastToolCallAt = 0
     if (child !== undefined && child.exitCode === null) child.kill()
   }
 }

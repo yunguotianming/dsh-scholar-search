@@ -6,7 +6,9 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { GenericCallView } from '@deepseek-ai/dsh-tools';
 import type { Runtime } from '../runtime.js';
-import type { PaperMeta } from '../types.js';
+import type { SearchValue } from '../search.js';
+export { compactPaper } from '../search.js';
+export type { SearchValue } from '../search.js';
 /** Output schema of one paper in the result list. */
 export declare const PAPER_META_SCHEMA: {
     readonly type: "object";
@@ -24,6 +26,24 @@ export declare const PAPER_META_SCHEMA: {
         };
         readonly year: {
             readonly type: "integer";
+        };
+        readonly printYear: {
+            readonly type: "integer";
+        };
+        readonly onlineYear: {
+            readonly type: "integer";
+        };
+        readonly volume: {
+            readonly type: "string";
+        };
+        readonly issue: {
+            readonly type: "string";
+        };
+        readonly pages: {
+            readonly type: "string";
+        };
+        readonly articleNumber: {
+            readonly type: "string";
         };
         readonly venue: {
             readonly type: "string";
@@ -60,6 +80,33 @@ export declare const PAPER_META_SCHEMA: {
         };
         readonly landingPageUrl: {
             readonly type: "string";
+        };
+        readonly siteDownloadUrl: {
+            readonly type: "string";
+        };
+        readonly publishDate: {
+            readonly type: "string";
+        };
+        readonly onlinePublishDate: {
+            readonly type: "string";
+        };
+        readonly organizations: {
+            readonly type: "array";
+            readonly items: {
+                readonly type: "string";
+            };
+        };
+        readonly funds: {
+            readonly type: "array";
+            readonly items: {
+                readonly type: "string";
+            };
+        };
+        readonly classifications: {
+            readonly type: "array";
+            readonly items: {
+                readonly type: "string";
+            };
         };
         readonly source: {
             readonly type: "string";
@@ -111,6 +158,24 @@ export declare const SEARCH_OUTPUT_SCHEMA: {
                     readonly year: {
                         readonly type: "integer";
                     };
+                    readonly printYear: {
+                        readonly type: "integer";
+                    };
+                    readonly onlineYear: {
+                        readonly type: "integer";
+                    };
+                    readonly volume: {
+                        readonly type: "string";
+                    };
+                    readonly issue: {
+                        readonly type: "string";
+                    };
+                    readonly pages: {
+                        readonly type: "string";
+                    };
+                    readonly articleNumber: {
+                        readonly type: "string";
+                    };
                     readonly venue: {
                         readonly type: "string";
                     };
@@ -147,6 +212,33 @@ export declare const SEARCH_OUTPUT_SCHEMA: {
                     readonly landingPageUrl: {
                         readonly type: "string";
                     };
+                    readonly siteDownloadUrl: {
+                        readonly type: "string";
+                    };
+                    readonly publishDate: {
+                        readonly type: "string";
+                    };
+                    readonly onlinePublishDate: {
+                        readonly type: "string";
+                    };
+                    readonly organizations: {
+                        readonly type: "array";
+                        readonly items: {
+                            readonly type: "string";
+                        };
+                    };
+                    readonly funds: {
+                        readonly type: "array";
+                        readonly items: {
+                            readonly type: "string";
+                        };
+                    };
+                    readonly classifications: {
+                        readonly type: "array";
+                        readonly items: {
+                            readonly type: "string";
+                        };
+                    };
                     readonly source: {
                         readonly type: "string";
                         readonly required: true;
@@ -180,16 +272,6 @@ export declare const SEARCH_OUTPUT_SCHEMA: {
         };
     };
 };
-/** Canonical value of `scholar_search`. */
-export interface SearchValue {
-    query: string;
-    total: number;
-    papers: PaperMeta[];
-    searchedSources: string[];
-    failedSources?: string[];
-}
-/** Strip undefined optionals so the value satisfies `exactOptionalPropertyTypes` and the schema. */
-export declare function compactPaper(paper: PaperMeta): PaperMeta;
 /** Model-facing rendering: one line per paper, identifiers and OA status visible. */
 export declare function renderSearch(value: SearchValue): {
     type: 'text';

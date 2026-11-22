@@ -37,6 +37,11 @@ describe('paperKeys', () => {
 })
 
 describe('mergePapers', () => {
+  it('卷期年覆盖在线年，并保留来源给出的卷期页码', () => {
+    const base = paper({ title: 'T', source: 'semantic_scholar', sourceId: 'a', year: 2021 })
+    const authoritative = paper({ title: 'T', source: 'crossref', sourceId: 'b', year: 2022, printYear: 2022, onlineYear: 2021, volume: '31', pages: '3414–3427' })
+    expect(mergePapers(base, authoritative)).toMatchObject({ year: 2022, onlineYear: 2021, volume: '31', pages: '3414–3427' })
+  })
   it('keeps the stronger source identity and fills absent fields', () => {
     const base = paper({ title: 'T', source: 'openalex', sourceId: 'W1', citationCount: 5 })
     const incoming = paper({ title: 'T', source: 'pubmed', sourceId: '123', doi: '10.1/x', abstract: 'longer abstract' })
@@ -53,6 +58,22 @@ describe('mergePapers', () => {
 })
 
 describe('mergePaperLists', () => {
+  it('同名但 DOI 不同的文章保持独立，两个 S2 ID 的相同 DOI 合并', () => {
+    const a = paper({ title: '相同标题', source: 'semantic_scholar', sourceId: 's2-a', doi: '10.1000/a' })
+    const b = paper({ title: '相同标题', source: 'semantic_scholar', sourceId: 's2-b', doi: '10.1000/b' })
+    const duplicate = { ...a, sourceId: 's2-c', title: '更新后的标题' }
+    expect(mergePaperLists([a, b, duplicate])).toHaveLength(2)
+    expect(mergeAndRank([[a, b, duplicate]], 10, 2026)).toHaveLength(2)
+    expect(mergePaperLists([{ ...a, pmid: '111' }, { ...duplicate, pmid: '222' }])).toHaveLength(1)
+  })
+
+  it('桥接记录合并先前分开的 DOI 和 PMID 记录', () => {
+    const a = paper({ title: 'First title', source: 'crossref', sourceId: 'a', doi: '10.1000/a' })
+    const b = paper({ title: 'Another title', source: 'pubmed', sourceId: 'b', pmid: '12345' })
+    const bridge = { ...a, pmid: '12345' }
+    expect(mergePaperLists([a, b, bridge])).toHaveLength(1)
+    expect(mergeAndRank([[a], [b, bridge]], 10, 2026)).toHaveLength(1)
+  })
   it('dedupes by shared doi across sources', () => {
     const a = paper({ title: 'Attention Is All You Need', source: 'arxiv', sourceId: '1706.03762', arxivId: '1706.03762' })
     const b = paper({ title: 'Attention Is All You Need', source: 'openalex', sourceId: 'W1', doi: '10.1/attn', arxivId: '1706.03762' })

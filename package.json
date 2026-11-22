@@ -1,11 +1,14 @@
 {
   "name": "dsh-scholar-search",
-  "version": "0.2.0",
-  "description": "Academic literature search for DeepSeek Harness: free scholarly APIs, OA full-text workflows, and Chinese paper search across CNKI, Wanfang, and CQVIP.",
+  "version": "0.3.1",
+  "description": "DeepSeek Harness 学术文献插件：通过免费学术接口检索文献、获取和读取开放获取（OA）全文，并支持中国知网、万方和维普的中文论文检索、详情字段与站内下载入口。",
   "type": "module",
   "license": "MIT",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
+  "bin": {
+    "dsh-scholar-mcp": "./lib/mcp/stdio.js"
+  },
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
@@ -79,8 +82,10 @@
     "prepublishOnly": "pnpm run clean && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
     "pdf-parse": "^2.4.5",
-    "playwright-core": "^1.49.0"
+    "playwright-core": "^1.49.0",
+    "zod": "4.2.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.1",

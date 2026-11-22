@@ -5,7 +5,8 @@
 - **名称**：`dsh-scholar-search`（npm 包名，与 dsh-ai4scholar 同级的独立第三方插件）
 - **位置**：`E:\project-workspace\ai-projects\deepseek-harness\plugins\self-developed\dsh-scholar-search\`
 - **性质**：独立 npm 包，**不属于** dsh 主仓库 workspace；构建后通过 `dsh plugin --profile web add dsh-scholar-search` 安装
-- **目标**：免费公开 API 检索、合法 OA 全文处理，并提供 CNKI、万方和维普中文论文检索。CNKI 由内置 `vendor/cnki-mcp` 通过本地 MCP 服务提供，万方和维普使用已连接的 dsh-browser；不自动登录、绕过验证码或下载受限全文。
+- **目标**：免费公开 API 检索、合法 OA 全文处理，并提供 CNKI、万方和维普中文论文检索、详情字段与站内下载入口。CNKI 由内置 `vendor/cnki-mcp` 通过本地 MCP 服务提供，万方和维普使用已连接的 dsh-browser；不自动登录、不绕过验证码和订阅，也不在插件进程里抓取中文受限全文。
+- **界面说明**：插件列表中的功能简介使用中文，由 `package.json` 的 `description` 字段提供，与中文 README 的简介保持一致。
 
 ## 2. 安装与加载机制（与 dsh-ai4scholar 相同）
 
@@ -41,7 +42,7 @@ plugins/self-developed/dsh-scholar-search/
 ├── README.md / README_CN.md
 ├── LICENSE                 # MIT
 ├── vendor/
-│   └── cnki-mcp/           # 随包分发的 GPLv3 CNKI MCP 源码、来源备注、依赖声明和许可证
+│   └── cnki-mcp/           # 随包分发的 GPLv3 CNKI MCP 源码（上游 0.2.0）、来源备注、依赖声明和许可证
 ├── src/
 │   ├── index.ts            # Cordis 插件入口：name/inject/Config/apply（无 default export）
 │   ├── types.ts            # PaperMeta 归一化模型 + ScholarSource 接口（仅类型）
@@ -50,7 +51,7 @@ plugins/self-developed/dsh-scholar-search/
 │   ├── pdf.ts              # PDF 文本抽取（pdf-parse）
 │   ├── chinese/
 │   │   ├── cnki-mcp.ts     # cnki-mcp HTTP 客户端、按需启动和进程清理
-│   │   └── browser-workflow.ts # 万方/维普 dsh-browser 工作流和快照解析
+│   │   └── browser-workflow.ts # 万方/维普详情抽取、三站下载入口与快照解析
 │   ├── prompt.ts           # systemPrompt 引导段
 │   ├── sources/
 │   │   ├── openalex.ts         # 搜索主干，免费无 key，带 OA 状态+PDF 链接
@@ -65,7 +66,7 @@ plugins/self-developed/dsh-scholar-search/
 │   │   ├── unpaywall.ts        # 仅 resolvePdf：DOI→OA PDF 权威源，仅需 email
 │   │   ├── openaire.ts         # 仅 resolvePdf：欧洲 OA 聚合补链，免费无 key
 │   │   ├── crossref_page.ts    # 仅 resolvePdf：DOI 出版商落地页 OA 链接解析
-│   │   └── grayarea.ts         # 仅 resolvePdf：Sci-Hub 镜像，仅 allowGrayArea:true 时启用
+│   │   └── grayarea.ts         # 仅 resolvePdf：Sci-Hub 镜像，默认可用，作为最后兜底
 │   ├── tools/
 │   │   ├── search.ts           # scholar_search 工具
 │   │   ├── download.ts         # scholar_download 工具
@@ -92,7 +93,7 @@ plugins/self-developed/dsh-scholar-search/
 ```jsonc
 {
   "name": "dsh-scholar-search",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "license": "MIT",
   "main": "./lib/index.js",
@@ -144,9 +145,9 @@ export interface Config {
   coreApiKey?: string
   /** PubMed E-utilities 可选 API key（无 key 时 3 req/s，带 key 10 req/s）。 */
   pubmedApiKey?: string
-  /** 启用灰色渠道（Sci-Hub 镜像）作为最后 fallback。默认 false，法律风险自负。 */
-  allowGrayArea?: boolean
-  /** 下载目录（相对 workspace 或绝对路径）。默认 "papers"。 */
+  /** 灰色渠道镜像 URL 模板（{doi} 占位符），默认使用内置镜像。 */
+  grayAreaMirrors?: string[]
+  /** 下载目录（相对 workspace 或绝对路径）。默认 "download/papers"。 */
   downloadDir?: string
   /** 启用的搜索源列表。默认全部（core 无 key 时自动跳过）。 */
   enabledSources?: string[]
@@ -232,15 +233,23 @@ export interface SearchQuery {
 | DOAJ | `doaj.org/api/v2/search/articles` | 无 | OA 期刊 | `bibjson.link` |
 | CORE | `api.core.ac.uk/v3/search/works` | 免费 key（可选） | 全球最大 OA 仓储聚合 | `downloadUrl` |
 
-**中文论文检索（独立工具，不加入上述 API fan-out）：**
+**中文检索、详情与下载入口（独立工具，不加入上述 API fan-out）：**
 
 | 来源 | 实现 | 前置条件 |
 |---|---|---|
-| CNKI | 内置 `vendor/cnki-mcp` 的 HTTP MCP 客户端 | Python 3.11+、uv、Playwright；首次需手工初始化 CNKI profile |
-| 万方 | dsh-browser 的 `browser_*` 嵌套调用 | 已连接的 dsh-browser 普通网页标签页 |
-| 维普 | dsh-browser 的 `browser_*` 嵌套调用 | 已连接的 dsh-browser 普通网页标签页 |
+| CNKI | 内置 `vendor/cnki-mcp` 的 HTTP MCP 客户端；下载入口交由 dsh-browser 读取 | Python 3.11+、uv、Playwright；首次需手工初始化 CNKI profile；浏览器需已登录机构账号 |
+| 万方 | dsh-browser 的 `browser_*` 嵌套调用 | 已连接的 dsh-browser 普通网页标签页；机构订阅决定下载按钮是否出现 |
+| 维普 | dsh-browser 的 `browser_*` 嵌套调用 | 已连接的 dsh-browser 普通网页标签页；规格不含下载入口字段 |
 
-中文工具配置：`chineseSearchEnabled` 默认开启；`cnkiMcpAutoStart` 默认开启；`cnkiMcpEndpoint` 默认 `http://127.0.0.1:7788/mcp`；`cnkiMcpExecutable` 默认 `uv`；`cnkiMcpProjectDir` 默认插件内置 `vendor/cnki-mcp`；`cnkiMcpStartupTimeoutMs` 默认 30000ms；`cnkiMcpMinIntervalMs` 默认 3000ms，最小允许 1000ms。首次 CNKI 使用仍需用户在 profile 中完成一次 `cnki-mcp init`。
+三个工具的分工：
+
+- `chinese_scholar_search`：检索，结果按来源分组，失败来源单独报告。
+- `chinese_scholar_detail`：万方/维普读详情页，CNKI 走 `cnki-mcp` 的 `get-info-from-url`；补齐 `doi`、`publishDate`、`onlinePublishDate`、`organizations`、`funds`、`classifications`、`volume`、`issue`、`pages`，并带出页面暴露的 `siteDownloadUrl`。
+- `chinese_scholar_download`：解析站点自身的下载入口（CNKI `.download-btns`、万方 `div.detailIcon`；维普的抽取规格不提供该字段），默认只解析并报告，`open=true` 时才在用户的受控标签页里打开。文件由浏览器保存，插件不读取、不落盘。格式分 `pdf`/`caj`/`other`，阅读页排除；只给 CAJ 时用 `caj-only` 说明需要专用阅读器。状态区分 `opened`、`link-resolved`、`caj-only`、`no-download-link`、`captcha`。
+
+`parseSnapshot` 解析交互元素时就同时记录 `role` 与 `href`，下载候选只接受归属于该站点的域名、排除详情页自身，按格式与名称路径打分排序（PDF +8、CAJ +2，阅读页排除），导航类链接（客户端、帮助、登录）扣分。CAJ 需要 CAJViewer 等专用阅读器，工具用 `caj-only` 说明实际格式，不改扩展名冒充 PDF；打开入口也不等于下载完成，调用方需核对浏览器下载列表。
+
+中文工具配置：`chineseSearchEnabled` 默认开启；`cnkiMcpAutoStart` 默认开启；`cnkiMcpEndpoint` 默认 `http://127.0.0.1:7788/mcp`；`cnkiMcpExecutable` 默认 `uv`；`cnkiMcpProjectDir` 默认插件内置 `vendor/cnki-mcp`；`cnkiMcpStartupTimeoutMs` 默认 30000ms；`cnkiMcpMinIntervalMs` 默认 3000ms，最小允许 1000ms。首次 CNKI 使用仍需用户在 profile 中完成一次 `cnki-mcp init`。下载入口不新增开关，沿用 `chineseSearchEnabled`。
 
 **OA 补链源（4 个，仅实现 `resolvePdf`，搜索结果经它们补 `pdfUrl`）：**
 
@@ -249,7 +258,7 @@ export interface SearchQuery {
 | Unpaywall | `api.unpaywall.org/v2/{doi}?email=` | email | DOI→OA PDF 最权威合法来源 |
 | OpenAIRE | `api.openaire.eu/search/publications` | 无 | 欧洲 OA 聚合；需过滤 namespace/schema 低价值 URL（参考 local_paper_hub） |
 | crossref_page | DOI 出版商落地页 | 无 | 解析落地页 citation_pdf_url meta 标签，只补链接不绕过付费墙 |
-| grayarea | Sci-Hub 镜像 | 无 | 仅 `allowGrayArea:true` 时启用，法律风险自负 |
+| grayarea | Sci-Hub 镜像 | 无 | 默认可用，作为 OA 来源之后的最后兜底；可配置镜像列表 |
 
 PubMed 与 Europe PMC 数据重叠但互补（同 local_paper_hub 的做法）：PubMed 做权威元数据，Europe PMC 补全文链接。
 
@@ -282,27 +291,28 @@ const SOURCE_QUALITY = {
 对一篇 `PaperMeta`，按以下顺序尝试解析免费 PDF，命中即下载：
 
 ```
-1. OpenAlex best_oa_location.pdf_url / locations[].pdf_url
-2. Unpaywall best_oa_location.url_for_pdf（需 DOI + email）
-3. Semantic Scholar openAccessPdf.url
-4. Europe PMC fullTextUrlList（availability == Free）
-5. arXiv / bioRxiv 直链（有 arxivId / bioRxiv DOI 时直接拼）
-6. OpenAIRE 全文链接（需 DOI/标题，过滤低价值 URL）
-7. CORE downloadUrl（需 key）
-8. crossref_page 落地页 citation_pdf_url（仅 OA 出版商会暴露）
-9. 出版商 OA 模式识别（PLOS/Frontiers/MDPI 等 OA 出版商的 .pdf 直链模式，借鉴 dsh-ai4scholar pdf.ts）
-10. grayarea（Sci-Hub，仅 allowGrayArea:true）
+1. Europe PMC 官方 PDF（可按 DOI/PMID 反查 PMCID）
+2. 搜索结果已有的 openAccessPdfUrl
+3. OpenAlex 的 OA PDF 直链及开放落地页
+4. Unpaywall 的 OA PDF 直链及开放落地页（需 DOI + email）
+5. Semantic Scholar openAccessPdf.url
+6. arXiv / bioRxiv 直链
+7. OpenAIRE 全文链接
+8. CORE downloadUrl（需 key）
+9. crossref_page 落地页 citation_pdf_url
+10. 出版商 OA URL 模式
+11. grayarea（默认可用）
 ```
 
 补链源遵循 local_paper_hub 的降级约定：401/403/429/验证码/空正文/超时一律降级为 warning 并跳过该源，不阻断链路、不绕过任何访问控制。
 
-- 下载到 `downloadDir`（默认 `papers/`），文件名 `{safeTitle}_{year}_{sourceId}.pdf`；
+- 下载到本次 `downloadDir` 或配置目录（默认 `download/papers`），文件名 `{safeTitle}_{year}_{sourceId}.pdf`；
 - 每个 URL 校验 `http(s)` scheme，拒绝 `file:` 等；跟随重定向后校验最终 URL；
-- 返回 `{ path, source, url, sizeBytes }`。
+- 返回 `{ path, source, url, sizeBytes, attempts, pdfVerification }`。失败时提供尝试记录及可人工打开的链接。
 
 ## 9. 可视化管理（两层都做）
 
-**第一层**：Host 端使用 `settings.register()` 注册配置命名空间，并通过 `scope.watch()` 接收热更新。Config schema 每个字段写 `description` 后，dsh Web 设置页生成表单——源开关、email、apiKey、下载目录、allowGrayArea 和 CNKI MCP 参数均可更新。
+**第一层**：Host 端使用 `settings.register()` 注册配置命名空间，并通过 `scope.watch()` 接收热更新。Config schema 每个字段写 `description` 后，dsh Web 设置页生成表单——源开关、email、apiKey、下载目录、镜像列表和 CNKI MCP 参数均可更新。灰色渠道默认可用，不再提供启用开关。
 
 **第二层（第一版就做）**：`src/client/index.tsx` 设置卡片（仿 dsh-ai4scholar），注册 `settings.plugin.item` 槽位（keyed by namespace，与第一层自动配对），提供：
 - 各源连通性测试按钮（ping 每个 API 返回延迟/可用性）
@@ -316,12 +326,13 @@ const SOURCE_QUALITY = {
 | 工具 | 参数 | 返回 |
 |---|---|---|
 | `scholar_search` | `query`、`sources?`、`limit?`(默认20)、`yearFrom?`、`yearTo?` | 并行查启用源 → DOI/标题去重合并 → `PaperMeta[]`（带 `openAccessPdfUrl`） |
-| `scholar_download` | `identifier`（DOI/arxivId/PMID/标题）或 `paper`（直接传搜索结果项）、`filename?` | fallback 链下载 → `{ path, source, url, sizeBytes }` 或 `{ error: 'no-free-fulltext', triedSources: [...] }` |
+| `scholar_download` | `identifier`（DOI/arxivId/PMID）、`paper`、`papers` 三选一；`filename?`、`downloadDir?`、`verifyMetadata?` | 单篇 PDF／诊断，或批量逐篇结果与自动统计 |
 | `scholar_read` | `path` 或 `identifier`、`maxChars?`(默认 8000) | 下载（如需）+ pdf-parse 抽取 → `{ text, pageCount, truncated }` |
 | `chinese_scholar_search` | `query`、`sources?`、`limit?`(默认10) | 检索 CNKI、万方、维普，独立报告结果和失败原因 |
-| `chinese_scholar_detail` | `url` | 读取中文论文详情元数据，不执行全文下载 |
+| `chinese_scholar_detail` | `url` | 读取中文论文详情元数据（含 DOI、发表日期、机构、基金、分类号与 `siteDownloadUrl`），不执行全文下载 |
+| `chinese_scholar_download` | `url` 或 `paper`、`open?`(默认 false) | 解析站点自身下载入口（PDF 优先、CAJ 单列）并在确认后打开 → `{ provider, detailUrl, downloadUrl?, format?, opened, status, message, candidates? }` |
 
-systemPrompt 引导段告知模型：查文献用 `scholar_search` 而非 `web_search`；下载用 `scholar_download`；全文阅读用 `scholar_read`。
+systemPrompt 引导段告知模型：查文献用 `scholar_search` 而非 `web_search`；下载用 `scholar_download`；全文阅读用 `scholar_read`；中文全文用 `chinese_scholar_download` 只转交站点入口，不代取、不绕过权限。
 
 ## 11. 构建/测试/验证
 
@@ -334,7 +345,7 @@ cd <dsh 用户目录>
 dsh plugin --profile web add file:E:/project-workspace/ai-projects/deepseek-harness/plugins/self-developed/dsh-scholar-search
 ```
 
-- 单测：mock fetch + 录制的真实 API 响应，验证字段映射/去重/fallback 顺序；中文测试覆盖快照解析、URL 校验和 cnki-mcp MCP 响应规范化；
+- 单测：mock fetch + 录制的真实 API 响应，验证字段映射/去重/fallback 顺序；中文测试覆盖快照解析（含元素角色与状态标记）、标签行字段切分、DOI/作者规范化、下载候选筛选与格式识别（域名白名单、排除详情页与阅读页、PDF 优先）、五个下载状态、工具层默认只解析、cnki-mcp MCP 响应规范化；
 - 手动 e2e：`scholar_search("attention is all you need")` 返回多源合并结果；`scholar_download` 对 arXiv:1706.03762 成功下载 PDF；
 - peerDependencies 版本下限对齐 dsh-ai4scholar 已验证可用的 `>=0.1.0-rc.6`。
 
@@ -343,8 +354,9 @@ dsh plugin --profile web add file:E:/project-workspace/ai-projects/deepseek-harn
 - 不直接爬取 Google Scholar；可选支持仅通过用户配置的 SerpAPI key 调用。
 - 不做 auto-cite / sci-draw / 余额查询（付费代理的增值服务）；
 - 不修改 dsh 主仓库（纯外部插件）；
-- 默认不开灰色渠道。
-- 不自动登录 CNKI、不自动完成验证码、不下载 CNKI/万方/维普受限全文；`scholar_download` 只处理合法 OA 链接。
+- 灰色渠道默认可用，`scholar_download` 仍按 OA 优先、灰色渠道最后兜底的顺序执行。
+- 不自动登录 CNKI、不自动完成验证码、不绕过中文站点的订阅或访问控制。
+- 中文全文不在插件进程里抓取：`chinese_scholar_download` 只解析详情页上站点自身的下载入口并交给用户浏览器，文件由浏览器保存；插件不读取、不落盘、不做 `%PDF` 校验。
 
 ## 13. 参考实现
 
@@ -368,8 +380,34 @@ dsh plugin --profile web add file:E:/project-workspace/ai-projects/deepseek-harn
 
 1. **包名**：`dsh-scholar-search` ✅
 2. **设置卡片（§9 第二层）**：第一版就做 ✅
-3. **灰色渠道**：保留 `allowGrayArea` 开关（默认关）✅
+3. **灰色渠道**：移除启用开关，默认可用；保留镜像列表配置 ✅
 4. **构建工具**：host 端纯 `tsc`；client 端用 `tsdown` 复刻 `clientBundle` preset ✅
 5. **中文检索**：使用独立的 `chinese_scholar_search` / `chinese_scholar_detail`，不混入普通 API fan-out ✅
 6. **浏览器边界**：保持第三方 dsh-browser 不变；万方和维普只使用现有 `browser_*` 工具 ✅
 7. **CNKI 分发**：`vendor/cnki-mcp` 随 npm 包分发并保留 GPLv3 许可证，按需自动启动服务 ✅
+
+## 检索与下载复盘对应的验收补充
+
+本节记录复盘对应的行为与验收标准。
+
+| 问题 | 需求与验收 |
+| --- | --- |
+| 目录权限和反复搬运 | 每次下载支持 `downloadDir`，相对会话工作区解析；联网前实际试写，失败返回 `write-error`，不修改 ACL 或默认目录配置 |
+| 中文文件名、假 PDF、同名覆盖 | Unicode 字母保留；Windows 保留名清理；直连和浏览器均校验 PDF 魔数；独占写入，存在文件返回 `file-exists` |
+| 回退链等待和访问失败 | 按第 9 节顺序尝试。验证 OpenAlex 直链去重、Unpaywall 直链失败后解析开放落地页，以及命中后停止后续查询。保留状态码、挑战页、DNS、超时和非 PDF 诊断 |
+| PDF 内容错配 | 根据首页题名或 DOI 核对文件身份。明确错配的文件跳过并继续回退。首页证据不足时保存并标为 `unverified` |
+| 错 DOI、平台重复和年份漂移 | Crossref DOI 查询走精确端点；`verifyMetadata=true` 时按 DOI 回解并核对预期标题，失败停止该篇；卷期年与在线年分别保存；未提供的著录字段保持缺失；强标识冲突的同名记录不合并，桥接记录可归并同篇记录 |
+| 摘要截断、错误选源和中文遗漏 | 摘要展示不再额外截断；接受源名称连字符别名，未知源报错；引导按领域选源、拆分低召回查询并按中国研究情境补查 CNKI／万方 |
+| 批量计数与人工补齐 | `papers` 批量下载返回逐篇状态及 `requested/unique/downloaded/failed/skipped`。预算用尽或目录故障时保留已完成项，未尝试项单独计数。待补齐清单显示题名、可用 DOI、失败原因和链接 |
+
+著录核对默认关闭。旧清单与正式著录工作流可开启 Crossref 精确 DOI 核对。PDF 首页身份核验在下载时执行，正文核对由阅读流程完成。
+
+机构网络、出版社授权、验证码、Windows ACL 修复和付费服务余额均不由插件自动处理。现有中文检索桥接继续使用已配置服务；本轮验证使用录制／模拟响应，不宣称完成了实时 CNKI 登录检索或机构网下载。
+
+## 本地 MCP 接口
+
+外部客户端通过 `stdio` 启动插件的 MCP 入口，复用检索去重、Crossref 精确 DOI 查询、开放访问候选解析和知网检索及详情。独立 MCP 和 DSH 通过同一个知网适配器连接已登录的内置服务。工具输入、状态和配置见 [MCP 接入说明](../README_CN.md#mcp-接入)。
+
+验收覆盖独立进程握手与工具发现、实际检索与 DOI 匹配、arXiv 候选链接返回、无效 DOI 错误，以及模拟知网响应下的检索和详情联通、登录错误透传。
+
+独立 MCP 的中文全文下载由客户端先向用户确认保存目录，以实际保存为完成条件。首次调用只生成本次确认所需的信息。收到与文献及目录匹配的确认编号后，才启动下载并独占写入目标目录。PDF 使用已有的题名和 DOI 核验。站点需要认证或人工处理时保留页面。文件路径、状态和浏览器配置见 [中文全文下载](../README_CN.md#下载中文全文文件)。

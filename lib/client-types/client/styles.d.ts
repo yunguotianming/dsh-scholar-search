@@ -15,7 +15,6 @@ export declare const cls: {
     readonly description: "schsr-description";
     readonly badge: "schsr-badge";
     readonly badgeOn: "schsr-badge-on";
-    readonly badgeWarn: "schsr-badge-warn";
     readonly chevron: "schsr-chevron";
     readonly chevronOpen: "schsr-chevron-open";
     readonly body: "schsr-body";
@@ -41,7 +40,6 @@ export declare const cls: {
     readonly notice: "schsr-notice";
     readonly noticeSaved: "schsr-notice-saved";
     readonly noticeError: "schsr-notice-error";
-    readonly checkbox: "schsr-checkbox";
 };
 export declare const CSS: string;
 /**

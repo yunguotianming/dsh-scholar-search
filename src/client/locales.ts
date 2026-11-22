@@ -15,7 +15,6 @@ export type ScholarSearchLocaleKey =
   | 'downloadDirLabel'
   | 'sourcesLabel'
   | 'grayAreaOn'
-  | 'grayAreaOff'
   | 'connectivity'
   | 'testAll'
   | 'testing'
@@ -42,7 +41,6 @@ export type ScholarSearchLocaleKey =
   | 'fieldCoreKey'
   | 'fieldGoogleScholarKey'
   | 'fieldDownloadDir'
-  | 'fieldAllowGrayArea'
   | 'save'
   | 'clear'
   | 'saved'
@@ -65,8 +63,7 @@ export const en: Record<ScholarSearchLocaleKey, string> = {
   emailUnset: 'no email (Unpaywall disabled)',
   downloadDirLabel: 'Download dir',
   sourcesLabel: 'Enabled sources',
-  grayAreaOn: 'gray-area fallback ON',
-  grayAreaOff: 'gray-area fallback off',
+  grayAreaOn: 'gray-area fallback available by default',
   connectivity: 'Source connectivity',
   testAll: 'Test all sources',
   testing: 'Testing…',
@@ -93,7 +90,6 @@ export const en: Record<ScholarSearchLocaleKey, string> = {
   fieldCoreKey: 'CORE API key',
   fieldGoogleScholarKey: 'Google Scholar (SerpAPI) key',
   fieldDownloadDir: 'Download directory',
-  fieldAllowGrayArea: 'Enable gray-area fallback',
   save: 'Save',
   clear: 'Clear',
   saved: 'Saved',
@@ -110,8 +106,7 @@ export const zh: Record<ScholarSearchLocaleKey, string> = {
   emailUnset: '未配置邮箱（Unpaywall 不可用）',
   downloadDirLabel: '下载目录',
   sourcesLabel: '启用的源',
-  grayAreaOn: '灰色渠道已开启',
-  grayAreaOff: '灰色渠道已关闭',
+  grayAreaOn: '灰色渠道默认可用',
   connectivity: '源连通性',
   testAll: '测试全部源',
   testing: '测试中…',
@@ -138,7 +133,6 @@ export const zh: Record<ScholarSearchLocaleKey, string> = {
   fieldCoreKey: 'CORE API key',
   fieldGoogleScholarKey: 'Google Scholar（SerpAPI）key',
   fieldDownloadDir: '下载目录',
-  fieldAllowGrayArea: '启用灰色渠道 fallback',
   save: '保存',
   clear: '清除',
   saved: '已保存',

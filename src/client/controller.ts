@@ -42,7 +42,6 @@ export interface ScholarCardState {
   emailConfigured: boolean
   downloadDir: string
   enabledSources: string[]
-  allowGrayArea: boolean
   /** Per-source connectivity, keyed by source id. */
   checks: Record<string, SourceCheck>
   /** A test-all run is in flight. */
@@ -154,7 +153,6 @@ export class ScholarCardController {
       emailConfigured: false,
       downloadDir: 'download/papers',
       enabledSources: [],
-      allowGrayArea: false,
       checks: {},
       busy: false,
       editable: typeof scope.set === 'function',
@@ -199,7 +197,6 @@ export class ScholarCardController {
       emailConfigured: configString(value, 'email').trim().length > 0,
       downloadDir: configString(value, 'downloadDir') || 'download/papers',
       enabledSources: configStringList(value, 'enabledSources'),
-      allowGrayArea: value?.allowGrayArea === true,
       configured,
       resolvedValues,
     })
@@ -219,15 +216,13 @@ export class ScholarCardController {
   }
 
   /**
-   * Persist one field through the scope. Reads the staged draft for text
-   * fields; `explicit` lets a checkbox save its boolean directly.
-   * @param field - config field name.
-   * @param explicit - a value to write instead of the draft (checkboxes).
+   * 将文本字段的编辑草稿保存到配置作用域。
+   * @param field - 配置字段名。
    */
-  async saveField(field: string, explicit?: unknown): Promise<void> {
+  async saveField(field: string): Promise<void> {
     if (this.scope.set === undefined || this.state.saving[field] === true) return
-    const value = explicit !== undefined ? explicit : this.state.draft[field]?.trim()
-    if (explicit === undefined && (typeof value !== 'string' || value.length === 0)) return
+    const value = this.state.draft[field]?.trim()
+    if (typeof value !== 'string' || value.length === 0) return
     this.patch({ saving: { ...this.state.saving, [field]: true } })
     try {
       await this.scope.set(field, value)

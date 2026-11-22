@@ -4,31 +4,32 @@
  * @module dsh-scholar-search/sources/unpaywall
  */
 
-import { fetchJson, isRecord, normalizeDoi, str } from '../http.js'
+import { fetchJson, isHttpUrl, isRecord, normalizeDoi, str } from '../http.js'
 import type { FetchOptions } from '../http.js'
-import type { PaperMeta, ScholarSource } from '../types.js'
+import type { PaperMeta, PdfLocations, ScholarSource } from '../types.js'
 
 export const UNPAYWALL_API = 'https://api.unpaywall.org/v2'
 
 /** Extract the best OA PDF URL out of an Unpaywall record. Exported for tests. */
 export function unpaywallPdfUrl(record: unknown): string | undefined {
-  if (!isRecord(record)) return undefined
-  const best = isRecord(record.best_oa_location) ? record.best_oa_location : undefined
-  const bestPdf = best !== undefined ? str(best, 'url_for_pdf') : undefined
-  if (bestPdf !== undefined) return bestPdf
-  if (Array.isArray(record.oa_locations)) {
-    for (const loc of record.oa_locations) {
-      if (!isRecord(loc)) continue
-      const pdf = str(loc, 'url_for_pdf')
-      if (pdf !== undefined) return pdf
-    }
-    // Fall back to the best OA landing page's url (often a repository PDF).
-    if (best !== undefined) {
-      const url = str(best, 'url')
-      if (url !== undefined && /\.pdf($|[?#])/i.test(url)) return url
-    }
+  return unpaywallPdfLocations(record).pdfUrls[0]
+}
+
+function unpaywallPdfLocations(record: unknown): PdfLocations {
+  if (!isRecord(record)) return { pdfUrls: [], landingUrls: [] }
+  const locations = [record.best_oa_location, ...(Array.isArray(record.oa_locations) ? record.oa_locations : [])]
+  const pdfUrls = new Set<string>()
+  const landingUrls = new Set<string>()
+  for (const location of locations) {
+    if (!isRecord(location)) continue
+    const pdf = str(location, 'url_for_pdf')
+    const url = str(location, 'url')
+    const landing = str(location, 'url_for_landing_page') ?? url
+    if (pdf !== undefined && isHttpUrl(pdf)) pdfUrls.add(pdf)
+    if (pdf === undefined && url !== undefined && isHttpUrl(url) && /\.pdf($|[?#])/i.test(url)) pdfUrls.add(url)
+    if (landing !== undefined && isHttpUrl(landing)) landingUrls.add(landing)
   }
-  return undefined
+  return { pdfUrls: [...pdfUrls], landingUrls: [...landingUrls].filter((url) => !pdfUrls.has(url)) }
 }
 
 /**
@@ -37,6 +38,13 @@ export function unpaywallPdfUrl(record: unknown): string | undefined {
  * @returns the source.
  */
 export function unpaywallSource(options: () => FetchOptions): ScholarSource {
+  async function resolvePdfLocations(paper: PaperMeta, signal: AbortSignal): Promise<PdfLocations> {
+    const doi = normalizeDoi(paper.doi)
+    const opts = options()
+    if (doi === undefined || !opts.email) return { pdfUrls: [], landingUrls: [] }
+    const data = await fetchJson(`${UNPAYWALL_API}/${encodeURIComponent(doi)}?email=${encodeURIComponent(opts.email)}`, { ...opts, signal })
+    return unpaywallPdfLocations(data)
+  }
   return {
     id: 'unpaywall',
     async search(): Promise<PaperMeta[]> {
@@ -44,12 +52,8 @@ export function unpaywallSource(options: () => FetchOptions): ScholarSource {
       return []
     },
     async resolvePdf(paper: PaperMeta, signal: AbortSignal): Promise<string | undefined> {
-      const doi = normalizeDoi(paper.doi)
-      if (doi === undefined) return undefined
-      const opts = options()
-      if (opts.email === undefined || opts.email.length === 0) return undefined
-      const data = await fetchJson(`${UNPAYWALL_API}/${encodeURIComponent(doi)}?email=${encodeURIComponent(opts.email)}`, { ...opts, signal })
-      return unpaywallPdfUrl(data)
+      return (await resolvePdfLocations(paper, signal)).pdfUrls[0]
     },
+    resolvePdfLocations,
   }
 }

@@ -19,7 +19,6 @@ export const cls = {
   description: `${P}-description`,
   badge: `${P}-badge`,
   badgeOn: `${P}-badge-on`,
-  badgeWarn: `${P}-badge-warn`,
   chevron: `${P}-chevron`,
   chevronOpen: `${P}-chevron-open`,
   body: `${P}-body`,
@@ -45,7 +44,6 @@ export const cls = {
   notice: `${P}-notice`,
   noticeSaved: `${P}-notice-saved`,
   noticeError: `${P}-notice-error`,
-  checkbox: `${P}-checkbox`,
 } as const
 
 export const CSS = `
@@ -59,7 +57,6 @@ export const CSS = `
 .${cls.description} { font-size: 13px; line-height: 1.5; color: var(--dsw-alias-label-tertiary); }
 .${cls.badge} { flex: none; border-radius: 999px; padding: 1px 8px; font-size: 11px; line-height: 17px; font-weight: 500; white-space: nowrap; color: var(--dsw-alias-label-tertiary); }
 .${cls.badgeOn} { background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary); }
-.${cls.badgeWarn} { background: var(--dsw-alias-label-error); color: var(--dsw-alias-bg-layer-3); }
 .${cls.chevron} { flex: none; width: 14px; height: 14px; color: var(--dsw-alias-label-tertiary); transition: transform .16s; }
 .${cls.chevronOpen} { transform: rotate(180deg); }
 .${cls.body} { border-top: 1px solid var(--dsw-alias-border-l2); margin: 0 16px; padding-bottom: 8px; }
@@ -89,7 +86,6 @@ export const CSS = `
 .${cls.notice} { flex: none; font-size: 12px; }
 .${cls.noticeSaved} { color: var(--dsw-alias-label-secondary); }
 .${cls.noticeError} { color: var(--dsw-alias-label-error); }
-.${cls.checkbox} { width: 16px; height: 16px; accent-color: var(--dsw-alias-brand-primary); cursor: pointer; }
 `
 
 /**

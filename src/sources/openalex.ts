@@ -5,9 +5,9 @@
  * @module dsh-scholar-search/sources/openalex
  */
 
-import { fetchJson, isRecord, normalizeArxivId, normalizeDoi, normalizePmcid, normalizePmid, num, str } from '../http.js'
+import { fetchJson, isHttpUrl, isRecord, normalizeArxivId, normalizeDoi, normalizePmcid, normalizePmid, num, str } from '../http.js'
 import type { FetchOptions } from '../http.js'
-import type { PaperMeta, ScholarSource, SearchQuery } from '../types.js'
+import type { PaperMeta, PdfLocations, ScholarSource, SearchQuery } from '../types.js'
 
 export const OPENALEX_API = 'https://api.openalex.org/works'
 
@@ -127,18 +127,18 @@ export function openAlexPdfCandidates(work: unknown): string[] {
   const out: string[] = []
   const seen = new Set<string>()
   const push = (url: string | undefined): void => {
-    if (url === undefined || seen.has(url)) return
+    if (url === undefined || !isHttpUrl(url) || seen.has(url)) return
     seen.add(url)
     out.push(url)
   }
   if (Array.isArray(work.locations)) {
     for (const loc of work.locations) {
-      if (!isRecord(loc)) continue
+      if (!isRecord(loc) || loc.is_oa === false) continue
       push(str(loc, 'pdf_url'))
     }
   }
   const best = isRecord(work.best_oa_location) ? work.best_oa_location : undefined
-  if (best !== undefined) push(str(best, 'pdf_url'))
+  if (best !== undefined && best.is_oa !== false) push(str(best, 'pdf_url'))
   // OpenAlex's own content proxy (content.openalex.org) — a full-text mirror
   // that the field report found under-used by the download chain.
   const contentUrls = isRecord(work.content_urls) ? work.content_urls : undefined
@@ -152,6 +152,24 @@ export function openAlexPdfCandidates(work: unknown): string[] {
  * @returns the source.
  */
 export function openAlexSource(options: () => FetchOptions): ScholarSource {
+  async function resolvePdfLocations(paper: PaperMeta, signal: AbortSignal): Promise<PdfLocations> {
+    const doi = normalizeDoi(paper.doi)
+    if (doi === undefined) return { pdfUrls: [], landingUrls: [] }
+    const opts = options()
+    const params = new URLSearchParams({ filter: `doi:${doi}` })
+    if (opts.email) params.set('mailto', opts.email)
+    const data = await fetchJson(`${OPENALEX_API}?${params.toString()}`, { ...opts, signal })
+    const work: unknown = isRecord(data) && Array.isArray(data.results) ? data.results[0] : undefined
+    if (!isRecord(work)) return { pdfUrls: [], landingUrls: [] }
+    const locations = [work.best_oa_location, ...(Array.isArray(work.locations) ? work.locations : [])]
+    const landingUrls = new Set<string>()
+    for (const location of locations) {
+      if (!isRecord(location) || location.is_oa === false || (location.is_oa !== true && location !== work.best_oa_location)) continue
+      const url = str(location, 'landing_page_url')
+      if (url !== undefined && isHttpUrl(url)) landingUrls.add(url)
+    }
+    return { pdfUrls: openAlexPdfCandidates(work), landingUrls: [...landingUrls] }
+  }
   return {
     id: 'openalex',
     async search(query: SearchQuery, signal: AbortSignal): Promise<PaperMeta[]> {
@@ -171,18 +189,8 @@ export function openAlexSource(options: () => FetchOptions): ScholarSource {
       return data.results.map(normalizeOpenAlexWork).filter((p): p is PaperMeta => p !== undefined)
     },
     async resolvePdf(paper: PaperMeta, signal: AbortSignal): Promise<string | undefined> {
-      // OpenAlex already surfaces pdf_url during search; resolvePdf re-reads a
-      // known DOI through the works filter for papers found elsewhere. It now
-      // returns the FIRST of every OA candidate (locations[].pdf_url +
-      // best_oa_location + the content proxy), not just best_oa_location.
-      const doi = normalizeDoi(paper.doi)
-      if (doi === undefined) return undefined
-      const opts = options()
-      const params = new URLSearchParams({ filter: `doi:${doi}` })
-      if (opts.email !== undefined && opts.email.length > 0) params.set('mailto', opts.email)
-      const data = await fetchJson(`${OPENALEX_API}?${params.toString()}`, { ...opts, signal })
-      if (!isRecord(data) || !Array.isArray(data.results)) return undefined
-      return openAlexPdfCandidates(data.results[0])[0]
+      return (await resolvePdfLocations(paper, signal)).pdfUrls[0]
     },
+    resolvePdfLocations,
   }
 }
